@@ -15,11 +15,50 @@ export interface DiagramEdge {
   type?: string;
 }
 
+export interface DiagramSettings {
+  visualStyle?: string;
+  nodeDesign?: string;
+  nodeDetail?: string;
+  useIcons?: boolean;
+  iconSource?: string;
+  colorPalette?: string;
+  customColors?: {
+    background?: string;
+    node?: string;
+    border?: string;
+    text?: string;
+    connector?: string;
+    accent?: string;
+  };
+  fontFamily?: string;
+  fontSize?: string;
+  fontWeight?: string;
+  layoutDirection?: string;
+  nodeSpacing?: string;
+  connectorSpacing?: string;
+  aspectRatio?: string;
+  aspectRatioCustom?: {
+    width?: number;
+    height?: number;
+    dpi?: number;
+  };
+  readability?: string;
+  autoOptimizeReadability?: boolean;
+  diagramDensity?: string;
+  connectorStyle?: string;
+  arrowStyle?: string;
+  lineThickness?: string;
+  lineType?: string;
+  relationshipLabels?: string;
+  backgroundTemplate?: string;
+}
+
 export interface DiagramData {
   title: string;
-  type: string; // flowchart, architecture, erd, sequence, bpmn
+  type: string; // flowchart, architecture, erd, sequence, bpmn, etc.
   nodes: DiagramNode[];
   edges: DiagramEdge[];
+  settings?: DiagramSettings;
 }
 
 export interface DiagramRecord {

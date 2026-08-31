@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { 
-  ReactFlow, Background, Controls, MiniMap, 
-  type Node, type Edge, MarkerType, BackgroundVariant 
+  ReactFlow, Background, Controls, MiniMap, BackgroundVariant, MarkerType,
+  useNodesState, useEdgesState, type Node, type Edge 
 } from "@xyflow/react";
 import { createClient } from "@/lib/supabase/client";
-import { DiagramData } from "@/types/diagram";
+import { DiagramData, DiagramSettings } from "@/types/diagram";
 import { downloadJson, downloadSvg, downloadPng } from "@/lib/diagram/export";
 
 import StandardNode from "@/components/workspace/canvas/nodes/StandardNode";
@@ -25,36 +25,37 @@ export default function ShareViewerPage() {
   const token = params.token as string;
   const supabase = createClient();
 
-  const [title, setTitle] = useState("Shared Diagram");
+  const [title, setTitle] = useState("Loading...");
   const [diagramType, setDiagramType] = useState("flowchart");
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [edges, setEdges] = useState<Edge[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
-  const [exportOpen, setExportOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Theme and scaling states
+  // React Flow states
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  // Theme states
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [nodeSize, setNodeSize] = useState<"sm" | "md" | "lg">("md");
   const [textSize, setTextSize] = useState<"sm" | "md" | "lg">("md");
   const [palette, setPalette] = useState<"indigo" | "emerald" | "amber" | "rose">("indigo");
 
-  // Read initial theme from localStorage/documentElement on client-side mount
+  // Customize settings state loaded from DB
+  const [settings, setSettings] = useState<DiagramSettings>({});
+
+  // Sync theme configurations
   useEffect(() => {
     const storedTheme = localStorage.theme;
-    const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    if (storedTheme === "dark" || (!storedTheme && systemPrefersDark)) {
+    if (storedTheme === "dark" || storedTheme === "light") {
+      setTheme(storedTheme);
+      document.documentElement.classList.add(storedTheme);
+    } else {
       setTheme("dark");
       document.documentElement.classList.add("dark");
-    } else {
-      setTheme("light");
-      document.documentElement.classList.remove("dark");
     }
   }, []);
 
-  // Sync theme state changes dynamically to documentElement classList
   useEffect(() => {
     if (theme === "dark") {
       document.documentElement.classList.add("dark");
@@ -69,38 +70,69 @@ export default function ShareViewerPage() {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   };
 
-  // Sync size and palette changes to all loaded React Flow nodes
+  // Sync settings and sizing changes to React Flow node attributes
   useEffect(() => {
     setNodes((nds) =>
       nds.map((node) => ({
         ...node,
         data: {
           ...node.data,
+          settings: settings,
           nodeSize,
           textSize,
           palette,
         },
       }))
     );
-  }, [nodeSize, textSize, palette]);
+  }, [nodeSize, textSize, palette, settings]);
 
-  // Sync edge style and markers when theme changes
+  // Sync connection edge rendering styles inline reactively based on theme/settings
   useEffect(() => {
     setEdges((eds) =>
-      eds.map((edge) => ({
-        ...edge,
-        style: {
-          ...edge.style,
-          stroke: theme === "dark" ? "#64748b" : "#94a3b8",
-          strokeWidth: 2,
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: theme === "dark" ? "#64748b" : "#94a3b8",
-        },
-      }))
+      eds.map((edge) => {
+        let strokeColor = theme === "dark" ? "#64748b" : "#94a3b8";
+        
+        if (settings.customColors?.connector) {
+          strokeColor = settings.customColors.connector;
+        } else if (settings.colorPalette && settings.colorPalette !== "Default" && settings.colorPalette !== "Auto Color") {
+          const pal = settings.colorPalette.toLowerCase();
+          if (pal.includes("indigo")) strokeColor = theme === "dark" ? "#818cf8" : "#4f46e5";
+          else if (pal.includes("emerald")) strokeColor = theme === "dark" ? "#34d399" : "#059669";
+          else if (pal.includes("amber")) strokeColor = theme === "dark" ? "#fbbf24" : "#d97706";
+          else if (pal.includes("rose")) strokeColor = theme === "dark" ? "#f43f5e" : "#e11d48";
+        }
+
+        let strokeDasharray = undefined;
+        if (settings.lineType === "Dashed") strokeDasharray = "5 5";
+        else if (settings.lineType === "Dotted") strokeDasharray = "2 3";
+
+        let strokeWidth = 2;
+        if (settings.lineThickness === "Thin") strokeWidth = 1.2;
+        else if (settings.lineThickness === "Thick") strokeWidth = 3.5;
+
+        const connStyle = (settings.connectorStyle || "default").toLowerCase();
+        let edgeType = "smoothstep";
+        if (connStyle === "curved" || connStyle === "smart") edgeType = "default";
+        else if (connStyle === "straight") edgeType = "straight";
+        else if (connStyle === "step" || connStyle === "elbow") edgeType = "step";
+
+        return {
+          ...edge,
+          type: edgeType,
+          style: {
+            ...edge.style,
+            stroke: strokeColor,
+            strokeWidth: strokeWidth,
+            strokeDasharray: strokeDasharray,
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: strokeColor,
+          },
+        };
+      })
     );
-  }, [theme]);
+  }, [theme, settings, setEdges]);
 
   // Register custom node renderers
   const nodeTypes = useMemo(
@@ -142,7 +174,6 @@ export default function ShareViewerPage() {
     const fetchSharedDiagram = async () => {
       setLoading(true);
       try {
-        // Query joint share record using public token
         const { data, error: dbError } = await supabase
           .from("shares")
           .select(`
@@ -171,6 +202,12 @@ export default function ShareViewerPage() {
         setDiagramType(diagram.diagram_type);
 
         const diagData = diagram.diagram_data as DiagramData;
+        if (diagData.settings) {
+          setSettings(diagData.settings);
+          if (diagData.settings.colorPalette && diagData.settings.colorPalette !== "Default" && diagData.settings.colorPalette !== "Auto Color") {
+            setPalette(diagData.settings.colorPalette as any);
+          }
+        }
 
         // Map nodes/edges to React Flow format
         const mappedNodes = (diagData.nodes || []).map((n) => ({
@@ -181,6 +218,7 @@ export default function ShareViewerPage() {
             description: n.description, 
             metadata: n.metadata, 
             type: n.type,
+            settings: diagData.settings || {},
             nodeSize: "md",
             textSize: "md",
             palette: "indigo"
@@ -251,6 +289,55 @@ export default function ShareViewerPage() {
       </div>
     );
   }
+
+  // 1. Resolve Background Class styles
+  const bgTemplate = settings.backgroundTemplate || "";
+  let bgClass = theme === "dark" ? "bg-slate-950" : "bg-slate-50";
+  
+  if (bgTemplate === "White") bgClass = "bg-white";
+  else if (bgTemplate === "Transparent") bgClass = "bg-transparent";
+  else if (bgTemplate === "Light gray") bgClass = "bg-slate-100";
+  else if (bgTemplate === "Dark") bgClass = "bg-slate-950";
+  else if (bgTemplate === "Blueprint") bgClass = "bg-[#0b192f]";
+
+  // 2. Resolve Background grid component settings
+  const showGrid = bgTemplate === "Grid" || bgTemplate === "Dotted grid" || bgTemplate === "Blueprint" || !bgTemplate;
+  const gridVariant = bgTemplate === "Grid" ? BackgroundVariant.Lines : BackgroundVariant.Dots;
+  
+  let gridColor = theme === "dark" ? "#1e293b" : "#cbd5e1";
+  if (bgTemplate === "Blueprint") {
+    gridColor = "rgba(56, 189, 248, 0.06)";
+  }
+
+  // 3. Resolve Aspect Ratio boundaries presets
+  const ratio = settings.aspectRatio || "Web (16:9) / Freeform";
+  let ratioStyle: React.CSSProperties = {};
+  let ratioClass = "w-full h-full";
+
+  if (ratio === "16:9") {
+    ratioClass = "w-full max-w-[1060px] aspect-[16/9] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  } else if (ratio === "16:10") {
+    ratioClass = "w-full max-w-[1060px] aspect-[16/10] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  } else if (ratio === "4:3") {
+    ratioClass = "w-full max-w-[850px] aspect-[4/3] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  } else if (ratio === "1:1") {
+    ratioClass = "w-full max-w-[700px] aspect-square shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  } else if (ratio === "A4 Portrait" || ratio === "A3 Portrait" || ratio === "Letter Portrait") {
+    ratioClass = "w-full max-w-[650px] aspect-[1/1.414] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  } else if (ratio === "A4 Landscape" || ratio === "A3 Landscape" || ratio === "Letter Landscape") {
+    ratioClass = "w-full max-w-[920px] aspect-[1.414/1] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  } else if (ratio === "9:16") {
+    ratioClass = "w-full max-w-[400px] aspect-[9/16] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  } else if (ratio === "4:5") {
+    ratioClass = "w-full max-w-[500px] aspect-[4/5] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  } else if (ratio === "Custom") {
+    const customW = settings.aspectRatioCustom?.width || 800;
+    const customH = settings.aspectRatioCustom?.height || 600;
+    ratioStyle = { width: `${customW}px`, height: `${customH}px` };
+    ratioClass = "shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+  }
+
+  const customBgColor = settings.customColors?.background;
 
   return (
     <div className="flex-1 flex flex-col bg-slate-950 text-slate-100 h-screen">
@@ -350,92 +437,15 @@ export default function ShareViewerPage() {
               </>
             )}
           </button>
-
-          {/* Export options */}
-          <div className="relative">
-            <button
-              onClick={() => setExportOpen(!exportOpen)}
-              className="py-1.5 px-3 bg-primary hover:bg-primary/95 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-md shadow-primary/10 cursor-pointer transition-all"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span>Export</span>
-            </button>
-
-            {exportOpen && (
-              <div className="absolute right-0 mt-2.5 w-48 bg-card border border-border rounded-xl shadow-2xl py-1.5 z-[90] text-xs">
-                <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none border-b border-slate-900 mb-1">
-                  Export PNG
-                </div>
-                <button
-                  onClick={() => {
-                    downloadPng(`${title}_1x.png`, 1);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-1.5 hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  PNG (1x Quality)
-                </button>
-                <button
-                  onClick={() => {
-                    downloadPng(`${title}_2x.png`, 2);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-1.5 hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  PNG (2x High Quality)
-                </button>
-                <button
-                  onClick={() => {
-                    downloadPng(`${title}_4x.png`, 4);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-1.5 hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  PNG (4x Ultra Quality)
-                </button>
-                <div className="border-t border-slate-900 my-1"></div>
-                <button
-                  onClick={() => {
-                    downloadSvg(`${title}.svg`);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-2 hover:bg-slate-900 text-slate-350 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  Download SVG
-                </button>
-                <button
-                  onClick={() => {
-                    const cleanNodes = nodes.map((n) => ({
-                      id: n.id,
-                      label: (n.data?.label as string) || "",
-                      type: n.type || "service",
-                      description: (n.data?.description as string) || "",
-                      position: n.position,
-                      metadata: (n.data?.metadata as Record<string, any>) || {},
-                    }));
-                    const cleanEdges = edges.map((e) => ({
-                      id: e.id,
-                      source: e.source,
-                      target: e.target,
-                      label: typeof e.label === "string" ? e.label : "",
-                      type: e.type || "default",
-                    }));
-                    downloadJson({ title, type: diagramType, nodes: cleanNodes, edges: cleanEdges }, `${title}.json`);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-2 hover:bg-slate-900 text-slate-350 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  Download JSON
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </header>
 
       {/* Shared Read-Only Canvas */}
-      <div className={`flex-1 relative select-none transition-colors duration-200 ${theme === "dark" ? "bg-slate-950" : "bg-slate-50"}`}>
-        <div className="absolute inset-0">
+      <div 
+        className={`flex-1 flex items-center justify-center p-6 overflow-auto transition-colors duration-200 ${bgClass}`}
+        style={customBgColor ? { backgroundColor: customBgColor } : undefined}
+      >
+        <div className={`relative ${ratioClass}`} style={ratioStyle}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -450,12 +460,19 @@ export default function ShareViewerPage() {
             }}
             fitView
           >
-            <Background variant={BackgroundVariant.Dots} size={1} gap={24} color={theme === "dark" ? "#1e293b" : "#cbd5e1"} />
+            {showGrid && (
+              <Background 
+                variant={gridVariant} 
+                size={1} 
+                gap={24} 
+                color={gridColor} 
+              />
+            )}
             <Controls showInteractive={false} className="shadow-2xl" />
             <MiniMap 
               nodeColor={() => "#6366f1"}
               maskColor="rgba(15, 23, 42, 0.6)"
-              className="hidden sm:block shadow-2xl"
+              className="hidden sm:block shadow-2xl" 
             />
           </ReactFlow>
         </div>

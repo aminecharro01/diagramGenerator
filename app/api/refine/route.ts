@@ -52,7 +52,11 @@ export async function POST(request: NextRequest) {
     const refinedRaw = await callAI(refineSystemPrompt, instruction);
 
     // 5. Re-run automatic layouts to place new nodes/edges cleanly
-    const layoutedDiagram = layoutDiagram(refinedRaw);
+    const settings = existingDiagram.settings;
+    const layoutedDiagram = layoutDiagram(refinedRaw, settings);
+    if (layoutedDiagram && settings) {
+      layoutedDiagram.settings = settings;
+    }
 
     // 6. Return response
     return NextResponse.json({

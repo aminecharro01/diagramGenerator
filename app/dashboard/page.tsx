@@ -514,11 +514,26 @@ export default function DashboardPage() {
                     onChange={(e) => setNewType(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer transition-all"
                   >
-                    <option value="flowchart">Flowchart (Decisions & steps)</option>
-                    <option value="architecture">System Architecture (Cloud/App boxes)</option>
-                    <option value="erd">Entity Relationship (Database PK/FK columns)</option>
-                    <option value="sequence">Sequence Diagram (Service request flows)</option>
-                    <option value="bpmn">BPMN Workflow (Gateway logic checks)</option>
+                    <option value="architecture diagram">Architecture Diagram</option>
+                    <option value="flowchart">Flowchart</option>
+                    <option value="class diagram">Class Diagram</option>
+                    <option value="use case diagram">Use Case Diagram</option>
+                    <option value="sequence diagram">Sequence Diagram</option>
+                    <option value="activity diagram">Activity Diagram</option>
+                    <option value="entity relationship diagram (erd)">Entity Relationship Diagram (ERD)</option>
+                    <option value="component diagram">Component Diagram</option>
+                    <option value="deployment diagram">Deployment Diagram</option>
+                    <option value="package diagram">Package Diagram</option>
+                    <option value="state machine diagram">State Machine Diagram</option>
+                    <option value="data flow diagram (dfd)">Data Flow Diagram (DFD)</option>
+                    <option value="system context diagram">System Context Diagram</option>
+                    <option value="mind map">Mind Map</option>
+                    <option value="network diagram">Network Diagram</option>
+                    <option value="infrastructure diagram">Infrastructure Diagram</option>
+                    <option value="database schema">Database Schema</option>
+                    <option value="bpmn-style process diagram">BPMN-style Process Diagram</option>
+                    <option value="timeline">Timeline</option>
+                    <option value="organization chart">Organization Chart</option>
                   </select>
                 </div>
               </div>

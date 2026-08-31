@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
     // 2. Parse request payload
     const body = await request.json();
-    const { prompt, diagramType } = body;
+    const { prompt, diagramType, settings } = body;
 
     if (!prompt || !diagramType) {
       return NextResponse.json(
@@ -47,12 +47,15 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Construct prompts and invoke AI provider
-    const userPrompt = getPromptForType(diagramType, prompt);
+    const userPrompt = getPromptForType(diagramType, prompt, settings);
     const systemPrompt = getSystemPromptForType(diagramType);
     const generatedRaw = await callAI(systemPrompt, userPrompt);
 
     // 5. Run automatic graph layouts for node placement coordinates
-    const layoutedDiagram = layoutDiagram(generatedRaw);
+    const layoutedDiagram = layoutDiagram(generatedRaw, settings);
+    if (layoutedDiagram && settings) {
+      layoutedDiagram.settings = settings;
+    }
 
     // 6. Return response
     return NextResponse.json({

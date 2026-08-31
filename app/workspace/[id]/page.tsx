@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { 
   useNodesState, useEdgesState, addEdge, type Node, type Edge, type Connection, MarkerType 
 } from "@xyflow/react";
 import { createClient } from "@/lib/supabase/client";
-import { DiagramData } from "@/types/diagram";
+import { DiagramData, DiagramSettings } from "@/types/diagram";
 import { layoutDiagram } from "@/lib/diagram/layout";
 import { downloadJson, downloadSvg, downloadPng } from "@/lib/diagram/export";
 
@@ -18,8 +18,50 @@ import {
   Sparkles, ArrowLeft, Loader2, Undo, Redo, ZoomIn, ZoomOut, Maximize, 
   Play, Save, ChevronRight, Layout, Settings, Share2, Download, Copy,
   Check, AlertCircle, RefreshCw, History, Code, MessageSquare, Shield,
-  Globe, X, Terminal, Sun, Moon
+  Globe, X, Terminal, Sun, Moon, Database, HelpCircle, Layers, Folder,
+  Plus, Trash2, Clock, AlignJustify
 } from "lucide-react";
+
+function ServerIcon(props: any) { return <span className="text-[10px]">🖥️</span>; }
+function ActivityIcon() { return <span className="text-[10px]">📈</span>; }
+function CodeIcon() { return <span className="text-[10px]">💻</span>; }
+function UserIcon() { return <span className="text-[10px]">👤</span>; }
+function ChevronRightIcon() { return <span className="text-[10px]">➡️</span>; }
+function PlayIcon() { return <span className="text-[10px]">▶️</span>; }
+function DatabaseIcon() { return <span className="text-[10px]">🗄️</span>; }
+function LayersIcon() { return <span className="text-[10px]">📚</span>; }
+function FolderIcon() { return <span className="text-[10px]">📁</span>; }
+function GitCommitIcon() { return <span className="text-[10px]">📍</span>; }
+function RefreshCwIcon() { return <span className="text-[10px]">🔄</span>; }
+function GlobeIcon() { return <span className="text-[10px]">🌍</span>; }
+function HelpCircleIcon() { return <span className="text-[10px]">❓</span>; }
+function NetworkIcon() { return <span className="text-[10px]">🌐</span>; }
+function CloudIcon() { return <span className="text-[10px]">☁️</span>; }
+function ClockIcon() { return <span className="text-[10px]">🕒</span>; }
+
+// List of 20 Diagram Types sorted by popularity/usage
+const DIAGRAM_TYPES = [
+  { value: "architecture diagram", name: "Architecture Diagram", desc: "Visualize system components, databases, APIs, and relationships.", icon: ServerIcon },
+  { value: "flowchart", name: "Flowchart", desc: "Define processes, decisions, and sequential workflow operations.", icon: ActivityIcon },
+  { value: "class diagram", name: "Class Diagram", desc: "Generate UML classes with attributes, methods, and relationships.", icon: CodeIcon },
+  { value: "use case diagram", name: "Use Case Diagram", desc: "Generate actors, use cases, and interaction boundaries.", icon: UserIcon },
+  { value: "sequence diagram", name: "Sequence Diagram", desc: "Generate chronological sequence of message transfers.", icon: ChevronRightIcon },
+  { value: "activity diagram", name: "Activity Diagram", desc: "Model parallel activity flows, forks, and joins.", icon: PlayIcon },
+  { value: "entity relationship diagram (erd)", name: "Entity Relationship Diagram (ERD)", desc: "Model database entities, keys, and cardinalities.", icon: DatabaseIcon },
+  { value: "component diagram", name: "Component Diagram", desc: "UML structural organization of component blocks.", icon: LayersIcon },
+  { value: "deployment diagram", name: "Deployment Diagram", desc: "Model server hosting nodes, devices, and artifacts.", icon: ServerIcon },
+  { value: "package diagram", name: "Package Diagram", desc: "Group files, folders, or modules inside packages.", icon: FolderIcon },
+  { value: "state machine diagram", name: "State Machine Diagram", desc: "Model event-triggered state transitions.", icon: GitCommitIcon },
+  { value: "data flow diagram (dfd)", name: "Data Flow Diagram (DFD)", desc: "Model data input/output flows through processes.", icon: RefreshCwIcon },
+  { value: "system context diagram", name: "System Context Diagram", desc: "Overview of actors and external system dependencies.", icon: GlobeIcon },
+  { value: "mind map", name: "Mind Map", desc: "Brainstorm topics branching radially from center.", icon: HelpCircleIcon },
+  { value: "network diagram", name: "Network Diagram", desc: "Visualize routers, switches, subnets, and host devices.", icon: NetworkIcon },
+  { value: "infrastructure diagram", name: "Infrastructure Diagram", desc: "Cloud infrastructure mapping (AWS/Azure/GCP).", icon: CloudIcon },
+  { value: "database schema", name: "Database Schema", desc: "Visual structure of tables, primary keys, and types.", icon: DatabaseIcon },
+  { value: "bpmn-style process diagram", name: "BPMN-style Process Diagram", desc: "Standard business process workflow swimlanes.", icon: ActivityIcon },
+  { value: "timeline", name: "Timeline", desc: "Chronological roadmap events and milestones.", icon: ClockIcon },
+  { value: "organization chart", name: "Organization Chart", desc: "Manager-employee reporting structures.", icon: UserIcon },
+];
 
 export default function WorkspacePage() {
   const params = useParams();
@@ -55,12 +97,15 @@ export default function WorkspacePage() {
   const [future, setFuture] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
 
   // Workspace layout state
-  const [activeTab, setActiveTab] = useState<"ai" | "code" | "history">("ai");
+  const [activeTab, setActiveTab] = useState<"ai" | "customize" | "code" | "history">("ai");
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"synced" | "saving" | "error">("synced");
 
-  // AI Refinement state
+  // AI Generation & Refinement state
+  const [generationMode, setGenerationMode] = useState<"refine" | "generate">("refine");
+  const [newPrompt, setNewPrompt] = useState("");
+  const [newType, setNewType] = useState("architecture diagram");
   const [refinePrompt, setRefinePrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiStep, setAiStep] = useState("");
@@ -78,13 +123,57 @@ export default function WorkspacePage() {
   // Export dropdown
   const [exportOpen, setExportOpen] = useState(false);
 
-  // Theme and scaling states
+  // Theme and legacy scaling states
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [nodeSize, setNodeSize] = useState<"sm" | "md" | "lg">("md");
   const [textSize, setTextSize] = useState<"sm" | "md" | "lg">("md");
   const [palette, setPalette] = useState<"indigo" | "emerald" | "amber" | "rose">("indigo");
 
-  // Read initial theme from localStorage/documentElement on client-side mount
+  // Customize settings state
+  const [settings, setSettings] = useState<DiagramSettings>({
+    visualStyle: "Modern",
+    nodeDesign: "Icon + text inside node",
+    nodeDetail: "Standard",
+    useIcons: true,
+    iconSource: "Technology icons",
+    colorPalette: "Default",
+    customColors: {
+      background: "",
+      node: "",
+      border: "",
+      text: "",
+      connector: "",
+      accent: "",
+    },
+    fontFamily: "Inter",
+    fontSize: "Medium",
+    fontWeight: "Semibold",
+    layoutDirection: "Left → Right",
+    nodeSpacing: "Normal",
+    connectorSpacing: "Normal",
+    aspectRatio: "Web (16:9) / Freeform",
+    aspectRatioCustom: {
+      width: 800,
+      height: 600,
+      dpi: 72,
+    },
+    readability: "Balanced",
+    autoOptimizeReadability: true,
+    diagramDensity: "Medium",
+    connectorStyle: "Smart",
+    arrowStyle: "Standard",
+    lineThickness: "Medium",
+    lineType: "Solid",
+    relationshipLabels: "Always visible",
+    backgroundTemplate: "Dotted grid",
+  });
+
+  // Custom style presets state
+  const [presets, setPresets] = useState<any[]>([]);
+  const [newPresetName, setNewPresetName] = useState("");
+  const [openSection, setOpenSection] = useState<string | null>("style");
+
+  // Read initial theme from localStorage/documentElement
   useEffect(() => {
     const storedTheme = localStorage.theme;
     const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -97,7 +186,7 @@ export default function WorkspacePage() {
     }
   }, []);
 
-  // Sync theme state changes dynamically to documentElement classList
+  // Sync theme changes
   useEffect(() => {
     if (theme === "dark") {
       document.documentElement.classList.add("dark");
@@ -112,44 +201,131 @@ export default function WorkspacePage() {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   };
 
-  // Sync size and palette changes to all loaded React Flow nodes
+  // Preset manager localStorage lifecycle
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("diagram_design_presets");
+      if (stored) {
+        setPresets(JSON.parse(stored));
+      } else {
+        const defaults = [
+          {
+            id: "blueprint-preset",
+            name: "Classic Blueprint",
+            settings: {
+              visualStyle: "Blueprint",
+              nodeDesign: "Icon + text inside node",
+              nodeDetail: "Standard",
+              useIcons: true,
+              colorPalette: "Default",
+              fontFamily: "JetBrains Mono",
+              fontSize: "Medium",
+              fontWeight: "Semibold",
+              layoutDirection: "Left → Right",
+              nodeSpacing: "Spacious",
+              connectorSpacing: "Normal",
+              aspectRatio: "A4 Landscape",
+              backgroundTemplate: "Blueprint",
+            }
+          },
+          {
+            id: "minimal-preset",
+            name: "Modern Minimalist",
+            settings: {
+              visualStyle: "Minimal",
+              nodeDesign: "Text only",
+              nodeDetail: "Compact",
+              useIcons: false,
+              colorPalette: "Default",
+              fontFamily: "Inter",
+              fontSize: "Small",
+              fontWeight: "Regular",
+              layoutDirection: "Top → Bottom",
+              nodeSpacing: "Compact",
+              connectorSpacing: "Compact",
+              aspectRatio: "Web (16:9) / Freeform",
+              backgroundTemplate: "White",
+            }
+          }
+        ];
+        localStorage.setItem("diagram_design_presets", JSON.stringify(defaults));
+        setPresets(defaults);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  // Sync settings and sizing changes to React Flow node attributes
   useEffect(() => {
     setNodes((nds) =>
       nds.map((node) => ({
         ...node,
         data: {
           ...node.data,
-          nodeSize,
-          textSize,
-          palette,
+          settings: settings,
+          nodeSize: nodeSize,
+          textSize: settings.fontSize === "Small" ? "sm" : settings.fontSize === "Large" ? "lg" : "md",
+          palette: settings.colorPalette === "Auto Color" ? "indigo" : settings.colorPalette || palette,
         },
       }))
     );
-  }, [nodeSize, textSize, palette, setNodes]);
+  }, [settings, nodeSize, palette, setNodes]);
 
-  // Sync edge style and markers when theme changes
+  // Sync connection edge rendering styles inline reactively based on theme/settings
   useEffect(() => {
     setEdges((eds) =>
-      eds.map((edge) => ({
-        ...edge,
-        style: {
-          ...edge.style,
-          stroke: theme === "dark" ? "#64748b" : "#94a3b8",
-          strokeWidth: 2,
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: theme === "dark" ? "#64748b" : "#94a3b8",
-        },
-      }))
-    );
-  }, [theme, setEdges]);
+      eds.map((edge) => {
+        let strokeColor = theme === "dark" ? "#64748b" : "#94a3b8";
+        
+        if (settings.customColors?.connector) {
+          strokeColor = settings.customColors.connector;
+        } else if (settings.colorPalette && settings.colorPalette !== "Default" && settings.colorPalette !== "Auto Color") {
+          const pal = settings.colorPalette.toLowerCase();
+          if (pal.includes("indigo")) strokeColor = theme === "dark" ? "#818cf8" : "#4f46e5";
+          else if (pal.includes("emerald")) strokeColor = theme === "dark" ? "#34d399" : "#059669";
+          else if (pal.includes("amber")) strokeColor = theme === "dark" ? "#fbbf24" : "#d97706";
+          else if (pal.includes("rose")) strokeColor = theme === "dark" ? "#f43f5e" : "#e11d48";
+        }
 
-  // Refs for debouncing save operations
+        let strokeDasharray = undefined;
+        if (settings.lineType === "Dashed") strokeDasharray = "5 5";
+        else if (settings.lineType === "Dotted") strokeDasharray = "2 3";
+
+        let strokeWidth = 2;
+        if (settings.lineThickness === "Thin") strokeWidth = 1.2;
+        else if (settings.lineThickness === "Thick") strokeWidth = 3.5;
+
+        // Route curved vs straight vs step routers
+        const connStyle = (settings.connectorStyle || "default").toLowerCase();
+        let edgeType = "smoothstep";
+        if (connStyle === "curved" || connStyle === "smart") edgeType = "default";
+        else if (connStyle === "straight") edgeType = "straight";
+        else if (connStyle === "step" || connStyle === "elbow") edgeType = "step";
+
+        return {
+          ...edge,
+          type: edgeType,
+          style: {
+            ...edge.style,
+            stroke: strokeColor,
+            strokeWidth: strokeWidth,
+            strokeDasharray: strokeDasharray,
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: strokeColor,
+          },
+        };
+      })
+    );
+  }, [theme, settings, setEdges]);
+
+  // Refs for autosave hooks
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const initialLoadRef = useRef(true);
 
-  // General Notification
+  // Notifications Toast State
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
@@ -157,7 +333,92 @@ export default function WorkspacePage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // 1. Fetch Diagram details on mount
+  // 1. Save diagram details to Supabase (PUT request)
+  const saveToServer = useCallback(async (
+    currentNodes: Node[], 
+    currentEdges: Edge[], 
+    currentTitle: string,
+    createVersion = false,
+    versionPrompt = ""
+  ) => {
+    setSaveStatus("saving");
+    try {
+      const cleanNodes = currentNodes.map((n) => ({
+        id: n.id,
+        label: (n.data?.label as string) || "",
+        type: n.type || "service",
+        description: (n.data?.description as string) || "",
+        position: n.position,
+        metadata: (n.data?.metadata as Record<string, any>) || {},
+      }));
+
+      const cleanEdges = currentEdges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        label: typeof e.label === "string" ? e.label : "",
+        type: e.type || "default",
+      }));
+
+      const diagramData: DiagramData = {
+        title: currentTitle,
+        type: diagramType,
+        nodes: cleanNodes,
+        edges: cleanEdges,
+        settings: settings, // Include customization settings!
+      };
+
+      const res = await fetch("/api/diagrams", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: diagramId,
+          title: currentTitle,
+          diagramData,
+          createVersion,
+          versionPrompt,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Failed to save diagram");
+      
+      setSaveStatus("synced");
+      setJsonText(JSON.stringify(diagramData, null, 2));
+    } catch (e) {
+      console.error("Save error:", e);
+      setSaveStatus("error");
+    }
+  }, [diagramId, diagramType, settings, supabase]);
+
+  // Debounced auto-save hook triggers on canvas updates
+  const queueAutosave = useCallback((updatedNodes: Node[], updatedEdges: Edge[], updatedTitle: string) => {
+    if (initialLoadRef.current) return;
+    
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    setSaveStatus("saving");
+    saveTimeoutRef.current = setTimeout(() => {
+      saveToServer(updatedNodes, updatedEdges, updatedTitle);
+    }, 2500);
+  }, [diagramType, settings, saveToServer]);
+
+  // Clean timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
+
+  // Update history stacks for undo/redo
+  const pushToHistory = useCallback((newNodes: Node[], newEdges: Edge[]) => {
+    if (initialLoadRef.current) return;
+    setPast((prev) => [...prev, { nodes: newNodes, edges: newEdges }]);
+    setFuture([]);
+  }, []);
+
+  // Fetch Diagram Details on Mount
   useEffect(() => {
     const fetchDetails = async () => {
       try {
@@ -186,12 +447,18 @@ export default function WorkspacePage() {
         setIsPublic(diagram.is_public);
 
         const diagData = diagram.diagram_data as DiagramData;
+        if (diagData.settings) {
+          setSettings(diagData.settings);
+          if (diagData.settings.colorPalette && diagData.settings.colorPalette !== "Default") {
+            setPalette(diagData.settings.colorPalette as any);
+          }
+        }
         
         // Ensure nodes have standard React Flow formats
         const mappedNodes = (diagData.nodes || []).map((n) => ({
           id: n.id,
           type: n.type,
-          data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type },
+          data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: diagData.settings },
           position: n.position || { x: 0, y: 0 },
         }));
 
@@ -232,7 +499,7 @@ export default function WorkspacePage() {
     fetchDetails();
   }, [diagramId]);
 
-  // 2. Fetch versions helper
+  // Fetch version list helper
   const fetchVersions = async () => {
     setVersionsLoading(true);
     try {
@@ -258,122 +525,7 @@ export default function WorkspacePage() {
     }
   }, [activeTab]);
 
-  // 3. Save diagram details to Supabase (PUT request)
-  const saveToServer = async (
-    currentNodes: Node[], 
-    currentEdges: Edge[], 
-    currentTitle: string,
-    createVersion = false,
-    versionPrompt = ""
-  ) => {
-    setSaveStatus("saving");
-    try {
-      // Re-map nodes back to our clean structural types
-      const cleanNodes = currentNodes.map((n) => ({
-        id: n.id,
-        label: (n.data?.label as string) || "",
-        type: n.type || "service",
-        description: (n.data?.description as string) || "",
-        position: n.position,
-        metadata: (n.data?.metadata as Record<string, any>) || {},
-      }));
-
-      const cleanEdges = currentEdges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        label: typeof e.label === "string" ? e.label : "",
-        type: e.type || "default",
-      }));
-
-      const diagramData: DiagramData = {
-        title: currentTitle,
-        type: diagramType,
-        nodes: cleanNodes,
-        edges: cleanEdges,
-      };
-
-      const res = await fetch("/api/diagrams", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: diagramId,
-          title: currentTitle,
-          diagramData,
-          createVersion,
-          versionPrompt,
-        }),
-      });
-
-      if (!res.ok) throw new Error("Failed to save diagram");
-      
-      setSaveStatus("synced");
-      setJsonText(JSON.stringify(diagramData, null, 2));
-    } catch (e) {
-      console.error("Save error:", e);
-      setSaveStatus("error");
-    }
-  };
-
-  // Debounced auto-save hook triggers on canvas updates
-  const queueAutosave = useCallback((updatedNodes: Node[], updatedEdges: Edge[], updatedTitle: string) => {
-    if (initialLoadRef.current) return;
-    
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-
-    setSaveStatus("saving");
-    saveTimeoutRef.current = setTimeout(() => {
-      saveToServer(updatedNodes, updatedEdges, updatedTitle);
-    }, 2500); // 2.5 second debounce delay
-  }, [diagramType]);
-
-  // Clean timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    };
-  }, []);
-
-  // Update history stacks for undo/redo
-  const pushToHistory = useCallback((newNodes: Node[], newEdges: Edge[]) => {
-    if (initialLoadRef.current) return;
-    
-    // Save snapshot of previous states
-    setPast((prev) => [...prev, { nodes, edges }]);
-    setFuture([]); // clear redo stack on new action
-  }, [nodes, edges]);
-
-  // 4. React Flow Events Handlers
-  const handleNodesChangeWrapper = (changes: any) => {
-    // Intercept changes to trigger save/history operations
-    const hasPositionOrDimChange = changes.some(
-      (c: any) => c.type === "position" && c.dragging === false
-    );
-    
-    if (hasPositionOrDimChange) {
-      pushToHistory(nodes, edges);
-    }
-
-    onNodesChange(changes);
-
-    // Call autosave
-    setNodes((currentNodes) => {
-      queueAutosave(currentNodes, edges, title);
-      return currentNodes;
-    });
-  };
-
-  const handleEdgesChangeWrapper = (changes: any) => {
-    pushToHistory(nodes, edges);
-    onEdgesChange(changes);
-    setEdges((currentEdges) => {
-      queueAutosave(nodes, currentEdges, title);
-      return currentEdges;
-    });
-  };
-
+  // React Flow onConnect event
   const onConnect = useCallback((params: Connection) => {
     pushToHistory(nodes, edges);
     const newEdge = {
@@ -395,7 +547,7 @@ export default function WorkspacePage() {
       queueAutosave(nodes, updated, title);
       return updated;
     });
-  }, [nodes, edges, queueAutosave, pushToHistory, title]);
+  }, [nodes, edges, theme, queueAutosave, pushToHistory, title]);
 
   // Properties Updates handler
   const handleUpdateNode = useCallback((nodeId: string, updatedFields: Partial<Node>) => {
@@ -404,7 +556,6 @@ export default function WorkspacePage() {
     setNodes((nds) => {
       const updated = nds.map((node) => {
         if (node.id === nodeId) {
-          // Merge styles
           return {
             ...node,
             ...updatedFields,
@@ -421,7 +572,6 @@ export default function WorkspacePage() {
       return updated;
     });
 
-    // Update active selected node state
     setSelectedNode((curr) => {
       if (curr?.id === nodeId) {
         return {
@@ -474,7 +624,6 @@ export default function WorkspacePage() {
       return updated;
     });
 
-    // Update active selected edge state
     setSelectedEdge((curr) => {
       if (curr?.id === edgeId) {
         return {
@@ -501,7 +650,7 @@ export default function WorkspacePage() {
     showToast("Connection relation removed.");
   }, [nodes, edges, queueAutosave, pushToHistory, title]);
 
-  // 5. Undo & Redo implementations
+  // Undo & Redo implementations
   const handleUndo = () => {
     if (past.length === 0) return;
     const previous = past[past.length - 1];
@@ -554,14 +703,15 @@ export default function WorkspacePage() {
         label: typeof e.label === "string" ? e.label : "",
         type: e.type || "default",
       })),
+      settings: settings, // Include settings during re-alignment!
     };
 
-    const reCalculated = layoutDiagram(currentDiagram);
+    const reCalculated = layoutDiagram(currentDiagram, settings);
     
     const reNodes = reCalculated.nodes.map((n) => ({
       id: n.id,
       type: n.type,
-      data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type },
+      data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: settings },
       position: n.position,
     }));
 
@@ -570,7 +720,7 @@ export default function WorkspacePage() {
     showToast("Re-aligned layout nodes.");
   };
 
-  // 6. AI Refinement Submitter
+  // AI Refinement Submitter
   const handleRefine = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!refinePrompt.trim()) return;
@@ -578,7 +728,6 @@ export default function WorkspacePage() {
     setAiLoading(true);
     setAiError(null);
     
-    // Animate loader steps
     const steps = [
       "Understanding modifications request...",
       "Analyzing graph entities...",
@@ -613,6 +762,7 @@ export default function WorkspacePage() {
           label: typeof e.label === "string" ? e.label : "",
           type: e.type || "default",
         })),
+        settings: settings,
       };
 
       const res = await fetch("/api/refine", {
@@ -633,7 +783,7 @@ export default function WorkspacePage() {
       const refinedNodes = (refinedData.nodes || []).map((n) => ({
         id: n.id,
         type: n.type,
-        data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type },
+        data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: settings },
         position: n.position,
       }));
 
@@ -651,7 +801,6 @@ export default function WorkspacePage() {
       setEdges(refinedEdges);
       setJsonText(JSON.stringify(refinedData, null, 2));
       
-      // Save changes immediately and commit a database version snapshot
       await saveToServer(refinedNodes, refinedEdges, title, true, refinePrompt);
       
       setRefinePrompt("");
@@ -664,13 +813,86 @@ export default function WorkspacePage() {
     }
   };
 
-  // 7. Manual JSON Code edit parser
+  // AI Re-generation Submitter (custom styles + prompt before creation)
+  const handleGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPrompt.trim()) return;
+
+    setAiLoading(true);
+    setAiError(null);
+    
+    const steps = [
+      "Analyzing layout requirements...",
+      "Generating block architecture...",
+      "Mapping relation paths...",
+      "Optimizing coordinates..."
+    ];
+    let stepIdx = 0;
+    setAiStep(steps[0]);
+    const timer = setInterval(() => {
+      if (stepIdx < steps.length - 1) {
+        stepIdx++;
+        setAiStep(steps[stepIdx]);
+      }
+    }, 1500);
+
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: newPrompt,
+          diagramType: newType,
+          settings: settings,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to generate diagram");
+
+      const generated = data.diagram as DiagramData;
+
+      const newNodes = (generated.nodes || []).map((n) => ({
+        id: n.id,
+        type: n.type,
+        data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: settings },
+        position: n.position,
+      }));
+
+      const newEdges = (generated.edges || []).map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        label: e.label,
+        type: e.type || "default",
+        markerEnd: { type: MarkerType.ArrowClosed, color: theme === "dark" ? "#64748b" : "#94a3b8" },
+      }));
+
+      pushToHistory(nodes, edges);
+      setNodes(newNodes);
+      setEdges(newEdges);
+      setDiagramType(newType);
+      setOriginalPrompt(newPrompt);
+      setJsonText(JSON.stringify(generated, null, 2));
+
+      await saveToServer(newNodes, newEdges, title, true, `Generated: ${newPrompt}`);
+      showToast("Diagram generated successfully!");
+      setNewPrompt("");
+      setGenerationMode("refine"); // switch back to refinement console
+    } catch (err: any) {
+      setAiError(err.message || "An AI error occurred.");
+    } finally {
+      clearInterval(timer);
+      setAiLoading(false);
+    }
+  };
+
+  // Manual JSON Code edit parser
   const handleCodeChange = (val: string) => {
     setJsonText(val);
     try {
       const parsed = JSON.parse(val) as DiagramData;
       
-      // Basic validations
       if (!parsed.nodes || !parsed.edges) {
         setJsonError("JSON must contain 'nodes' and 'edges' arrays.");
         return;
@@ -678,11 +900,10 @@ export default function WorkspacePage() {
 
       setJsonError(null);
 
-      // Map positions and details
       const parsedNodes = parsed.nodes.map((n) => ({
         id: n.id,
         type: n.type || "service",
-        data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type },
+        data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: settings },
         position: n.position || { x: 0, y: 0 },
       }));
 
@@ -699,22 +920,20 @@ export default function WorkspacePage() {
       setNodes(parsedNodes);
       setEdges(parsedEdges);
       
-      // Save
       queueAutosave(parsedNodes, parsedEdges, title);
-
     } catch (e: any) {
       setJsonError(`Invalid JSON: ${e.message}`);
     }
   };
 
-  // 8. Restore specific version snapshot
+  // Restore specific version snapshot
   const handleRestoreVersion = async (version: any) => {
     const diagData = version.diagram_data as DiagramData;
     
     const mappedNodes = (diagData.nodes || []).map((n) => ({
       id: n.id,
       type: n.type,
-      data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type },
+      data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: diagData.settings || settings },
       position: n.position,
     }));
 
@@ -730,17 +949,15 @@ export default function WorkspacePage() {
     pushToHistory(nodes, edges);
     setNodes(mappedNodes);
     setEdges(mappedEdges);
+    if (diagData.settings) setSettings(diagData.settings);
     setJsonText(JSON.stringify(diagData, null, 2));
 
-    // Save and commit restoration record
     await saveToServer(mappedNodes, mappedEdges, title, true, `Restored Version ${version.version_number}`);
-    
-    // Refresh history
     await fetchVersions();
     showToast(`Restored Version ${version.version_number}`);
   };
 
-  // 9. Link Sharing toggles
+  // Link Sharing toggles
   const handleEnableShare = async () => {
     setShareLoading(true);
     try {
@@ -787,13 +1004,156 @@ export default function WorkspacePage() {
     showToast("Share link copied to clipboard!");
   };
 
+  // Local storage Presets CRUD handlers
+  const handleSavePreset = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPresetName.trim()) return;
+
+    const newPreset = {
+      id: `preset-${Date.now()}`,
+      name: newPresetName,
+      settings: settings,
+    };
+
+    const updated = [...presets, newPreset];
+    setPresets(updated);
+    localStorage.setItem("diagram_design_presets", JSON.stringify(updated));
+    setNewPresetName("");
+    showToast(`Preset "${newPreset.name}" saved!`);
+  };
+
+  const handleLoadPreset = (preset: any) => {
+    setSettings(preset.settings);
+    
+    // Auto-layout and save to server
+    setTimeout(() => {
+      const currentDiagram: DiagramData = {
+        title,
+        type: diagramType,
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          label: (n.data?.label as string) || "",
+          type: n.type || "service",
+          description: (n.data?.description as string) || "",
+          position: n.position,
+          metadata: (n.data?.metadata as Record<string, any>) || {},
+        })),
+        edges: edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label: typeof e.label === "string" ? e.label : "",
+          type: e.type || "default",
+        })),
+        settings: preset.settings,
+      };
+      const reCalculated = layoutDiagram(currentDiagram, preset.settings);
+      
+      const mappedNodes = reCalculated.nodes.map((n) => ({
+        id: n.id,
+        type: n.type,
+        data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: preset.settings },
+        position: n.position,
+      }));
+
+      setNodes(mappedNodes);
+      saveToServer(mappedNodes, edges, title);
+    }, 100);
+
+    showToast(`Loaded preset "${preset.name}".`);
+  };
+
+  const handleDeletePreset = (presetId: string, name: string) => {
+    const updated = presets.filter((p) => p.id !== presetId);
+    setPresets(updated);
+    localStorage.setItem("diagram_design_presets", JSON.stringify(updated));
+    showToast(`Preset "${name}" removed.`);
+  };
+
+  // One-click spacing optimization when diagrams get too dense for printing
+  const isA4 = settings.aspectRatio?.includes("A4") || settings.aspectRatio?.includes("A3");
+  const isDense = nodes.length > 10;
+  const showWarning = isA4 && isDense;
+
+  const optimizeForA4 = () => {
+    const updatedSettings = {
+      ...settings,
+      nodeSpacing: "Compact",
+      nodeDetail: "Compact",
+      readability: "Highly Readable",
+      autoOptimizeReadability: true,
+      layoutDirection: "Top → Bottom", // Prefer vertical layout for Portrait printing
+    };
+    setSettings(updatedSettings);
+    
+    setTimeout(() => {
+      const currentDiagram: DiagramData = {
+        title,
+        type: diagramType,
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          label: (n.data?.label as string) || "",
+          type: n.type || "service",
+          description: (n.data?.description as string) || "",
+          position: n.position,
+          metadata: (n.data?.metadata as Record<string, any>) || {},
+        })),
+        edges: edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label: typeof e.label === "string" ? e.label : "",
+          type: e.type || "default",
+        })),
+        settings: updatedSettings,
+      };
+      const reCalculated = layoutDiagram(currentDiagram, updatedSettings);
+      
+      const mappedNodes = reCalculated.nodes.map((n) => ({
+        id: n.id,
+        type: n.type,
+        data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: updatedSettings },
+        position: n.position,
+      }));
+
+      setNodes(mappedNodes);
+      saveToServer(mappedNodes, edges, title);
+    }, 100);
+
+    showToast("Optimized coordinates spacing for A4 printing.");
+  };
+
+  // Predefined custom color changes handler
+  const handleCustomColorChange = (key: string, value: string) => {
+    const updatedColors = {
+      ...settings.customColors,
+      [key]: value,
+    };
+    const updatedSettings = {
+      ...settings,
+      colorPalette: "Custom", // Auto switch palette selection to custom
+      customColors: updatedColors,
+    };
+    setSettings(updatedSettings);
+    queueAutosave(nodes, edges, title);
+  };
+
+  const handleSettingsChange = (key: keyof DiagramSettings, value: any) => {
+    const updatedSettings = {
+      ...settings,
+      [key]: value,
+    };
+    setSettings(updatedSettings);
+    queueAutosave(nodes, edges, title);
+  };
+
   return (
     <div className="flex-1 flex flex-col bg-slate-950 text-slate-100 h-screen">
       {/* Toast popup */}
       {toast && (
-        <div className="fixed bottom-5 right-5 z-[100] px-4 py-3 rounded-xl border bg-card/90 backdrop-blur-md shadow-2xl flex items-center gap-2 max-w-sm animate-bounce">
-          <Sparkles className="h-4 w-4 text-primary shrink-0" />
-          <span className="text-xs font-semibold">{toast.message}</span>
+        <div className="fixed bottom-5 right-5 z-[100] px-4 py-3 rounded-xl border border-slate-900 bg-slate-950/90 backdrop-blur-md shadow-2xl flex items-center gap-2 max-w-sm">
+          <Sparkles className="h-4.5 w-4.5 text-indigo-500 shrink-0" />
+          <span className="text-xs font-semibold text-white">{toast.message}</span>
         </div>
       )}
 
@@ -809,24 +1169,24 @@ export default function WorkspacePage() {
           <div className="overflow-hidden">
             <h1 className="text-sm font-bold text-white leading-tight truncate">{title}</h1>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="inline-flex items-center py-0.5 px-1.5 rounded bg-slate-900 border border-slate-850 text-[8px] font-bold text-slate-400 uppercase tracking-wide">
+              <span className="inline-flex items-center py-0.5 px-1.5 rounded bg-slate-900 border border-slate-850 text-[8px] font-bold text-slate-450 uppercase tracking-wide">
                 {diagramType}
               </span>
               <span className="text-[9px] text-slate-500 flex items-center gap-1 font-mono">
                 {saveStatus === "saving" ? (
                   <>
                     <RefreshCw className="h-3 w-3 animate-spin text-primary" />
-                    Saving changes...
+                    Saving...
                   </>
                 ) : saveStatus === "error" ? (
                   <>
                     <AlertCircle className="h-3 w-3 text-destructive" />
-                    Error syncing
+                    Sync Error
                   </>
                 ) : (
                   <>
                     <Check className="h-3 w-3 text-emerald-450" />
-                    Cloud Synced
+                    Synced
                   </>
                 )}
               </span>
@@ -864,57 +1224,44 @@ export default function WorkspacePage() {
             {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
           </button>
 
-          {/* Node Size Selector */}
+          {/* Sizing warning helper */}
+          {showWarning && (
+            <button
+              onClick={optimizeForA4}
+              className="py-1.5 px-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all hover:bg-amber-500/20"
+              title="Click to automatically optimize node coordinates spacing for print sizes."
+            >
+              <AlertCircle className="h-3.5 w-3.5" />
+              <span>Optimize Spacing</span>
+            </button>
+          )}
+
+          {/* Responsive Preview Format Selectors */}
           <div className="flex items-center gap-1.5 bg-slate-900/60 border border-slate-850 rounded-xl px-2.5 py-1 text-xs">
-            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider select-none">Node</span>
+            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider select-none">Format</span>
             <select
-              value={nodeSize}
-              onChange={(e) => setNodeSize(e.target.value as "sm" | "md" | "lg")}
+              value={settings.aspectRatio || "Web (16:9) / Freeform"}
+              onChange={(e) => handleSettingsChange("aspectRatio", e.target.value)}
               className="bg-transparent border-none text-slate-300 focus:outline-none cursor-pointer text-xs font-semibold [&>option]:bg-slate-950 [&>option]:text-slate-200"
             >
-              <option value="sm">Small</option>
-              <option value="md">Medium</option>
-              <option value="lg">Large</option>
+              <option value="Web (16:9) / Freeform">Desktop (Freeform)</option>
+              <option value="16:9">Presentation (16:9)</option>
+              <option value="1:1">Social (1:1)</option>
+              <option value="9:16">Mobile (9:16)</option>
+              <option value="A4 Portrait">A4 Portrait</option>
+              <option value="A4 Landscape">A4 Landscape</option>
+              <option value="A3 Landscape">A3 Landscape</option>
+              <option value="Custom">Custom Size</option>
             </select>
           </div>
-
-          {/* Text Size Selector */}
-          <div className="flex items-center gap-1.5 bg-slate-900/60 border border-slate-850 rounded-xl px-2.5 py-1 text-xs">
-            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider select-none">Text</span>
-            <select
-              value={textSize}
-              onChange={(e) => setTextSize(e.target.value as "sm" | "md" | "lg")}
-              className="bg-transparent border-none text-slate-300 focus:outline-none cursor-pointer text-xs font-semibold [&>option]:bg-slate-950 [&>option]:text-slate-200"
-            >
-              <option value="sm">Small</option>
-              <option value="md">Medium</option>
-              <option value="lg">Large</option>
-            </select>
-          </div>
-
-          {/* Color Palette Selector */}
-          <div className="flex items-center gap-1.5 bg-slate-900/60 border border-slate-850 rounded-xl px-2.5 py-1 text-xs">
-            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider select-none">Palette</span>
-            <select
-              value={palette}
-              onChange={(e) => setPalette(e.target.value as any)}
-              className="bg-transparent border-none text-slate-300 focus:outline-none cursor-pointer text-xs font-semibold [&>option]:bg-slate-950 [&>option]:text-slate-200"
-            >
-              <option value="indigo">Cool Indigo</option>
-              <option value="emerald">Forest Emerald</option>
-              <option value="amber">Warm Amber</option>
-              <option value="rose">Sunset Rose</option>
-            </select>
-          </div>
-
 
           <button
             onClick={handleAutoLayout}
-            className="py-1.5 px-3 bg-slate-900 hover:bg-slate-850 border border-slate-850 rounded-xl text-xs font-semibold text-slate-350 flex items-center gap-1.5 cursor-pointer transition-all"
+            className="py-1.5 px-3 bg-slate-900 hover:bg-slate-850 border border-slate-855 rounded-xl text-xs font-semibold text-slate-355 flex items-center gap-1.5 cursor-pointer transition-all"
             title="Auto layout with Dagre engine"
           >
             <Layout className="h-3.5 w-3.5" />
-            <span>Format Diagram</span>
+            <span>Format</span>
           </button>
 
           <button
@@ -956,7 +1303,7 @@ export default function WorkspacePage() {
                   }}
                   className="w-full text-left px-4 py-1.5 hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
                 >
-                  PNG (2x High Quality)
+                  PNG (2x Quality)
                 </button>
                 <button
                   onClick={() => {
@@ -965,7 +1312,7 @@ export default function WorkspacePage() {
                   }}
                   className="w-full text-left px-4 py-1.5 hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
                 >
-                  PNG (4x Ultra Quality)
+                  PNG (4x Quality)
                 </button>
                 <div className="border-t border-slate-900 my-1"></div>
                 <button
@@ -994,7 +1341,7 @@ export default function WorkspacePage() {
                       label: typeof e.label === "string" ? e.label : "",
                       type: e.type || "default",
                     }));
-                    downloadJson({ title, type: diagramType, nodes: cleanNodes, edges: cleanEdges }, `${title}.json`);
+                    downloadJson({ title, type: diagramType, nodes: cleanNodes, edges: cleanEdges, settings: settings }, `${title}.json`);
                     setExportOpen(false);
                   }}
                   className="w-full text-left px-4 py-2 hover:bg-slate-900 text-slate-350 hover:text-white transition-all cursor-pointer font-medium"
@@ -1010,93 +1357,196 @@ export default function WorkspacePage() {
       {/* Main Split Layout */}
       <div className="flex-1 flex overflow-hidden max-w-full">
         
-        {/* Left pane: Control panels (AI refine, Code editor, History) */}
+        {/* Left pane: Control panels (AI refine, Customize, Code editor, History) */}
         <div className="w-80 border-r border-slate-900 bg-slate-950 flex flex-col shrink-0 select-none">
           {/* Tabs header */}
-          <div className="flex border-b border-slate-900 bg-slate-950/40 p-1">
+          <div className="flex border-b border-slate-900 bg-slate-950/40 p-0.5 overflow-x-auto select-none no-scrollbar">
             <button
               onClick={() => setActiveTab("ai")}
-              className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              className={`flex-1 px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
                 activeTab === "ai"
-                  ? "bg-slate-900 border border-slate-850 text-white"
-                  : "text-slate-500 hover:text-slate-300"
+                  ? "bg-slate-900 border border-slate-850 text-white shadow-sm"
+                  : "text-slate-550 hover:text-slate-350"
               }`}
             >
               <MessageSquare className="h-3 w-3" />
-              <span>AI Refine</span>
+              <span>Refine</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("customize")}
+              className={`flex-1 px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                activeTab === "customize"
+                  ? "bg-slate-900 border border-slate-850 text-white shadow-sm"
+                  : "text-slate-550 hover:text-slate-355"
+              }`}
+            >
+              <Settings className="h-3 w-3" />
+              <span>Style</span>
             </button>
             <button
               onClick={() => setActiveTab("code")}
-              className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              className={`flex-1 px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
                 activeTab === "code"
-                  ? "bg-slate-900 border border-slate-850 text-white"
-                  : "text-slate-500 hover:text-slate-300"
+                  ? "bg-slate-900 border border-slate-850 text-white shadow-sm"
+                  : "text-slate-550 hover:text-slate-355"
               }`}
             >
               <Code className="h-3 w-3" />
-              <span>JSON Code</span>
+              <span>JSON</span>
             </button>
             <button
               onClick={() => setActiveTab("history")}
-              className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              className={`flex-1 px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
                 activeTab === "history"
-                  ? "bg-slate-900 border border-slate-850 text-white"
-                  : "text-slate-500 hover:text-slate-300"
+                  ? "bg-slate-900 border border-slate-850 text-white shadow-sm"
+                  : "text-slate-555 hover:text-slate-355"
               }`}
             >
               <History className="h-3 w-3" />
-              <span>Versions</span>
+              <span>History</span>
             </button>
           </div>
 
           {/* Tab content area */}
-          <div className="flex-1 p-5 overflow-y-auto flex flex-col max-h-full">
+          <div className="flex-1 p-5 overflow-y-auto flex flex-col max-h-full scrollbar-thin">
             {activeTab === "ai" && (
-              <div className="space-y-6 flex-1 flex flex-col">
-                <div>
-                  <h3 className="text-xs font-bold text-white mb-2 flex items-center gap-1">
-                    <Sparkles className="h-4.5 w-4.5 text-primary" />
-                    <span>AI Assistant Refinement</span>
-                  </h3>
-                  <p className="text-[10px] text-slate-500 leading-relaxed">
-                    Write instructions to adjust components. AI updates the existing model without regenerating the whole structure.
-                  </p>
-                </div>
-
-                {aiError && (
-                  <div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 text-destructive text-[11px] rounded-xl leading-relaxed">
-                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <span>{aiError}</span>
+              <div className="space-y-6 flex-1 flex flex-col justify-between">
+                <div className="space-y-5">
+                  <div className="flex bg-slate-900/50 p-1 border border-slate-900 rounded-xl select-none">
+                    <button
+                      onClick={() => setGenerationMode("refine")}
+                      className={`flex-1 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${
+                        generationMode === "refine" ? "bg-slate-950 text-white border border-slate-900" : "text-slate-500"
+                      }`}
+                    >
+                      Tweak/Edit
+                    </button>
+                    <button
+                      onClick={() => setGenerationMode("generate")}
+                      className={`flex-1 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${
+                        generationMode === "generate" ? "bg-slate-950 text-white border border-slate-900" : "text-slate-500"
+                      }`}
+                    >
+                      Re-generate
+                    </button>
                   </div>
-                )}
 
-                <form onSubmit={handleRefine} className="space-y-4.5 mt-auto">
-                  <textarea
-                    rows={4}
-                    value={refinePrompt}
-                    onChange={(e) => setRefinePrompt(e.target.value)}
-                    disabled={aiLoading}
-                    placeholder="e.g. 'Add Redis cache linked to the backend API', 'Add authentication validation steps'..."
-                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-850 rounded-xl text-xs placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none transition-all text-slate-200"
-                  />
-                  <button
-                    type="submit"
-                    disabled={aiLoading || !refinePrompt.trim()}
-                    className="w-full py-2.5 px-4 bg-primary hover:bg-primary/95 disabled:opacity-40 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-primary/10 transition-all"
-                  >
-                    {aiLoading ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        <span>Refining...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-3 w-3" />
-                        <span>Apply Instruction</span>
-                      </>
-                    )}
-                  </button>
-                </form>
+                  {generationMode === "refine" ? (
+                    <>
+                      <div>
+                        <h3 className="text-xs font-bold text-white mb-2 flex items-center gap-1">
+                          <Sparkles className="h-4.5 w-4.5 text-primary" />
+                          <span>AI Refine Modifications</span>
+                        </h3>
+                        <p className="text-[10px] text-slate-500 leading-relaxed">
+                          Tweak existing diagrams inline. Explain modifications like adding databases, removing API blocks, etc.
+                        </p>
+                      </div>
+
+                      {aiError && (
+                        <div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 text-destructive text-[11px] rounded-xl leading-relaxed">
+                          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                          <span>{aiError}</span>
+                        </div>
+                      )}
+
+                      <form onSubmit={handleRefine} className="space-y-4">
+                        <textarea
+                          rows={4}
+                          value={refinePrompt}
+                          onChange={(e) => setRefinePrompt(e.target.value)}
+                          disabled={aiLoading}
+                          placeholder="e.g. 'Add Redis cache linked to backend', 'Add OAuth workflow layers'..."
+                          className="w-full px-3 py-2.5 bg-slate-900 border border-slate-850 rounded-xl text-xs placeholder:text-slate-650 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none transition-all text-slate-200"
+                        />
+                        <button
+                          type="submit"
+                          disabled={aiLoading || !refinePrompt.trim()}
+                          className="w-full py-2.5 px-4 bg-primary hover:bg-primary/95 disabled:opacity-40 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-primary/10 transition-all font-sans"
+                        >
+                          {aiLoading ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              <span>Refining...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="h-3 w-3" />
+                              <span>Apply Tweak</span>
+                            </>
+                          )}
+                        </button>
+                      </form>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <h3 className="text-xs font-bold text-white mb-1.5">AI Create & Generate</h3>
+                        <p className="text-[10px] text-slate-500 leading-relaxed">
+                          Re-generate the diagram entirely based on the prompt below, integrating all layout, ratio, and custom style options chosen in the <b>Style</b> tab.
+                        </p>
+                      </div>
+
+                      {aiError && (
+                        <div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 text-destructive text-[11px] rounded-xl leading-relaxed">
+                          <AlertCircle className="h-4.5 w-4.5 shrink-0 mt-0.5" />
+                          <span>{aiError}</span>
+                        </div>
+                      )}
+
+                      <form onSubmit={handleGenerate} className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                            Diagram Type
+                          </label>
+                          <select
+                            value={newType}
+                            onChange={(e) => setNewType(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none cursor-pointer font-medium"
+                          >
+                            {DIAGRAM_TYPES.map((t) => (
+                              <option key={t.value} value={t.value}>
+                                {t.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                            Prompt / Description
+                          </label>
+                          <textarea
+                            rows={4}
+                            value={newPrompt}
+                            onChange={(e) => setNewPrompt(e.target.value)}
+                            disabled={aiLoading}
+                            placeholder="Describe what you want to construct..."
+                            className="w-full px-3 py-2.5 bg-slate-900 border border-slate-850 rounded-xl text-xs placeholder:text-slate-650 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none transition-all text-slate-200"
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={aiLoading || !newPrompt.trim()}
+                          className="w-full py-2.5 px-4 bg-primary hover:bg-primary/95 disabled:opacity-40 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-primary/10 transition-all font-sans"
+                        >
+                          {aiLoading ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              <span>Generating...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3.5 w-3.5 text-indigo-200" />
+                              <span>Generate Diagram</span>
+                            </>
+                          )}
+                        </button>
+                      </form>
+                    </>
+                  )}
+                </div>
 
                 {aiLoading && (
                   <div className="mt-4 p-4 rounded-xl border border-primary/20 bg-primary/5 flex flex-col items-center justify-center text-center">
@@ -1104,6 +1554,520 @@ export default function WorkspacePage() {
                     <span className="text-xs font-bold text-white">{aiStep}</span>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* CUSTOMIZATION PANEL TAB */}
+            {activeTab === "customize" && (
+              <div className="space-y-4 text-xs select-none">
+                
+                {/* 1. General Style Accordion */}
+                <div className="border border-slate-900 bg-slate-900/10 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setOpenSection(openSection === "style" ? null : "style")}
+                    className="w-full px-4 py-3 flex items-center justify-between font-bold text-white hover:bg-slate-900/40 transition-all text-xs"
+                  >
+                    <span>General Style & Node Design</span>
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${openSection === "style" ? "rotate-90" : ""}`} />
+                  </button>
+
+                  {openSection === "style" && (
+                    <div className="p-4 border-t border-slate-900 space-y-4 bg-slate-950/50">
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Visual Style</label>
+                        <select
+                          value={settings.visualStyle || "Modern"}
+                          onChange={(e) => handleSettingsChange("visualStyle", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Modern">Modern (Clean)</option>
+                          <option value="Minimal">Minimal (Borderless)</option>
+                          <option value="Professional">Professional</option>
+                          <option value="Corporate">Corporate</option>
+                          <option value="Technical">Technical</option>
+                          <option value="Academic">Academic</option>
+                          <option value="Hand-drawn">Hand-drawn (Dashed)</option>
+                          <option value="Blueprint">Blueprint (Deep Blue)</option>
+                          <option value="Glassmorphism">Glassmorphism</option>
+                          <option value="Flat">Flat Colors</option>
+                          <option value="High Contrast">High Contrast</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Node Design Layout</label>
+                        <select
+                          value={settings.nodeDesign || "Icon + text inside node"}
+                          onChange={(e) => handleSettingsChange("nodeDesign", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Icon + text inside node">Icon + Text Inside (Default)</option>
+                          <option value="Icon above + text below">Icon Above + Text Below</option>
+                          <option value="Text inside node">Text Inside (No Icon)</option>
+                          <option value="Icon only">Icon Only</option>
+                          <option value="Text only">Text Only</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Node Detail Level</label>
+                        <select
+                          value={settings.nodeDetail || "Standard"}
+                          onChange={(e) => handleSettingsChange("nodeDetail", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Minimal">Minimal (Title Only)</option>
+                          <option value="Compact">Compact</option>
+                          <option value="Standard">Standard</option>
+                          <option value="Detailed">Detailed</option>
+                          <option value="Very Detailed">Very Detailed</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Icons & Readability Accordion */}
+                <div className="border border-slate-900 bg-slate-900/10 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setOpenSection(openSection === "icons" ? null : "icons")}
+                    className="w-full px-4 py-3 flex items-center justify-between font-bold text-white hover:bg-slate-900/40 transition-all text-xs"
+                  >
+                    <span>Icons & Readability</span>
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${openSection === "icons" ? "rotate-90" : ""}`} />
+                  </button>
+
+                  {openSection === "icons" && (
+                    <div className="p-4 border-t border-slate-900 space-y-4.5 bg-slate-950/50">
+                      <div className="flex items-center justify-between select-none">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Use Icons</span>
+                        <input
+                          type="checkbox"
+                          checked={settings.useIcons !== false}
+                          onChange={(e) => handleSettingsChange("useIcons", e.target.checked)}
+                          className="rounded border-slate-800 bg-slate-900 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                        />
+                      </div>
+
+                      {settings.useIcons !== false && (
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Icon Categories</label>
+                          <select
+                            value={settings.iconSource || "Technology icons"}
+                            onChange={(e) => handleSettingsChange("iconSource", e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                          >
+                            <option value="Technology icons">Technology Icons</option>
+                            <option value="Generic icons">Generic Icons</option>
+                            <option value="UML icons">UML Symbols</option>
+                            <option value="Cloud provider icons">Cloud Provider (AWS/Azure)</option>
+                            <option value="Database icons">Database Blocks</option>
+                          </select>
+                        </div>
+                      )}
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Readability Mode</label>
+                        <select
+                          value={settings.readability || "Balanced"}
+                          onChange={(e) => handleSettingsChange("readability", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Compact">Compact Spacing</option>
+                          <option value="Balanced">Balanced</option>
+                          <option value="Highly Readable">Highly Readable (Wide Spacing)</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center justify-between select-none">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Auto Optimize Spacing</span>
+                        <input
+                          type="checkbox"
+                          checked={settings.autoOptimizeReadability !== false}
+                          onChange={(e) => handleSettingsChange("autoOptimizeReadability", e.target.checked)}
+                          className="rounded border-slate-800 bg-slate-900 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Colors & Palettes Accordion */}
+                <div className="border border-slate-900 bg-slate-900/10 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setOpenSection(openSection === "colors" ? null : "colors")}
+                    className="w-full px-4 py-3 flex items-center justify-between font-bold text-white hover:bg-slate-900/40 transition-all text-xs"
+                  >
+                    <span>Colors & Themes</span>
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${openSection === "colors" ? "rotate-90" : ""}`} />
+                  </button>
+
+                  {openSection === "colors" && (
+                    <div className="p-4 border-t border-slate-900 space-y-4 bg-slate-950/50">
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Color Palette</label>
+                        <select
+                          value={settings.colorPalette || "Default"}
+                          onChange={(e) => {
+                            handleSettingsChange("colorPalette", e.target.value);
+                            if (e.target.value !== "Custom" && e.target.value !== "Auto Color" && e.target.value !== "Default") {
+                              setPalette(e.target.value.toLowerCase() as any);
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Default">Indigo (Default)</option>
+                          <option value="Emerald">Emerald Green</option>
+                          <option value="Amber">Amber Orange</option>
+                          <option value="Rose">Rose Pink</option>
+                          <option value="Auto Color">Auto Color (AI Semantic)</option>
+                          <option value="Custom">Custom Colors...</option>
+                        </select>
+                      </div>
+
+                      {/* Custom colors pickers block */}
+                      {settings.colorPalette === "Custom" && (
+                        <div className="border border-slate-900 p-3 rounded-lg bg-slate-950 space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-slate-400 font-medium">Background</span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={settings.customColors?.background || ""}
+                                onChange={(e) => handleCustomColorChange("background", e.target.value)}
+                                placeholder="#000000"
+                                className="w-20 px-1 py-0.5 bg-slate-900 border border-slate-800 text-[10.5px] font-mono focus:outline-none text-slate-200 text-center"
+                              />
+                              <input
+                                type="color"
+                                value={settings.customColors?.background || "#0b0f19"}
+                                onChange={(e) => handleCustomColorChange("background", e.target.value)}
+                                className="w-5 h-5 rounded cursor-pointer border-none p-0 bg-transparent"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-slate-400 font-medium">Node fill</span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={settings.customColors?.node || ""}
+                                onChange={(e) => handleCustomColorChange("node", e.target.value)}
+                                placeholder="#ffffff"
+                                className="w-20 px-1 py-0.5 bg-slate-900 border border-slate-800 text-[10.5px] font-mono focus:outline-none text-slate-200 text-center"
+                              />
+                              <input
+                                type="color"
+                                value={settings.customColors?.node || "#0d1324"}
+                                onChange={(e) => handleCustomColorChange("node", e.target.value)}
+                                className="w-5 h-5 rounded cursor-pointer border-none p-0 bg-transparent"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-slate-400 font-medium">Border stroke</span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={settings.customColors?.border || ""}
+                                onChange={(e) => handleCustomColorChange("border", e.target.value)}
+                                placeholder="#e2e8f0"
+                                className="w-20 px-1 py-0.5 bg-slate-900 border border-slate-880 text-[10.5px] font-mono focus:outline-none text-slate-200 text-center"
+                              />
+                              <input
+                                type="color"
+                                value={settings.customColors?.border || "#1f2937"}
+                                onChange={(e) => handleCustomColorChange("border", e.target.value)}
+                                className="w-5 h-5 rounded cursor-pointer border-none p-0 bg-transparent"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-slate-400 font-medium">Connector line</span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={settings.customColors?.connector || ""}
+                                onChange={(e) => handleCustomColorChange("connector", e.target.value)}
+                                placeholder="#64748b"
+                                className="w-20 px-1 py-0.5 bg-slate-900 border border-slate-880 text-[10.5px] font-mono focus:outline-none text-slate-200 text-center"
+                              />
+                              <input
+                                type="color"
+                                value={settings.customColors?.connector || "#64748b"}
+                                onChange={(e) => handleCustomColorChange("connector", e.target.value)}
+                                className="w-5 h-5 rounded cursor-pointer border-none p-0 bg-transparent"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. Typography Accordion */}
+                <div className="border border-slate-900 bg-slate-900/10 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setOpenSection(openSection === "fonts" ? null : "fonts")}
+                    className="w-full px-4 py-3 flex items-center justify-between font-bold text-white hover:bg-slate-900/40 transition-all text-xs"
+                  >
+                    <span>Typography & Font Sizes</span>
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${openSection === "fonts" ? "rotate-90" : ""}`} />
+                  </button>
+
+                  {openSection === "fonts" && (
+                    <div className="p-4 border-t border-slate-900 space-y-4 bg-slate-950/50">
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Font Family</label>
+                        <select
+                          value={settings.fontFamily || "Inter"}
+                          onChange={(e) => handleSettingsChange("fontFamily", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Inter">Inter (Sans)</option>
+                          <option value="Poppins">Poppins (Modern)</option>
+                          <option value="Roboto">Roboto</option>
+                          <option value="IBM Plex Sans">IBM Plex Sans</option>
+                          <option value="JetBrains Mono">JetBrains Mono (Technical)</option>
+                          <option value="System">System UI</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Font Size Scale</label>
+                        <select
+                          value={settings.fontSize || "Medium"}
+                          onChange={(e) => handleSettingsChange("fontSize", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Small">Small</option>
+                          <option value="Medium">Medium</option>
+                          <option value="Large">Large</option>
+                          <option value="Extra Large">Extra Large</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Font Weight</label>
+                        <select
+                          value={settings.fontWeight || "Semibold"}
+                          onChange={(e) => handleSettingsChange("fontWeight", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Regular">Regular</option>
+                          <option value="Medium">Medium</option>
+                          <option value="Semibold">Semibold</option>
+                          <option value="Bold">Bold</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 5. Layout & Spacing Accordion */}
+                <div className="border border-slate-900 bg-slate-900/10 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setOpenSection(openSection === "layout" ? null : "layout")}
+                    className="w-full px-4 py-3 flex items-center justify-between font-bold text-white hover:bg-slate-900/40 transition-all text-xs"
+                  >
+                    <span>Layout & Node Spacing</span>
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${openSection === "layout" ? "rotate-90" : ""}`} />
+                  </button>
+
+                  {openSection === "layout" && (
+                    <div className="p-4 border-t border-slate-900 space-y-4 bg-slate-950/50">
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Layout Direction</label>
+                        <select
+                          value={settings.layoutDirection || "Left → Right"}
+                          onChange={(e) => {
+                            handleSettingsChange("layoutDirection", e.target.value);
+                            // Auto re-align on direction switch
+                            setTimeout(handleAutoLayout, 100);
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Left → Right">Left → Right (Horizontal)</option>
+                          <option value="Top → Bottom">Top → Bottom (Vertical)</option>
+                          <option value="Right → Left">Right → Left</option>
+                          <option value="Bottom → Top">Bottom → Top</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Node Grid Spacing</label>
+                        <select
+                          value={settings.nodeSpacing || "Normal"}
+                          onChange={(e) => {
+                            handleSettingsChange("nodeSpacing", e.target.value);
+                            setTimeout(handleAutoLayout, 100);
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Compact">Compact</option>
+                          <option value="Normal">Normal</option>
+                          <option value="Spacious">Spacious</option>
+                          <option value="Extra Spacious">Extra Spacious</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 6. Connector & Arrows Accordion */}
+                <div className="border border-slate-900 bg-slate-900/10 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setOpenSection(openSection === "connectors" ? null : "connectors")}
+                    className="w-full px-4 py-3 flex items-center justify-between font-bold text-white hover:bg-slate-900/40 transition-all text-xs"
+                  >
+                    <span>Connectors & Edge Lines</span>
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${openSection === "connectors" ? "rotate-90" : ""}`} />
+                  </button>
+
+                  {openSection === "connectors" && (
+                    <div className="p-4 border-t border-slate-900 space-y-4 bg-slate-950/50">
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Line Router Type</label>
+                        <select
+                          value={settings.connectorStyle || "Smart"}
+                          onChange={(e) => handleSettingsChange("connectorStyle", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Smart">Smart Bezier</option>
+                          <option value="Straight">Straight Lines</option>
+                          <option value="Step">Orthogonal (Step)</option>
+                          <option value="Curved">Curved Bezier</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Line Thickness</label>
+                        <select
+                          value={settings.lineThickness || "Medium"}
+                          onChange={(e) => handleSettingsChange("lineThickness", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Thin">Thin</option>
+                          <option value="Medium">Medium</option>
+                          <option value="Thick">Thick</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Line Pattern</label>
+                        <select
+                          value={settings.lineType || "Solid"}
+                          onChange={(e) => handleSettingsChange("lineType", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Solid">Solid</option>
+                          <option value="Dashed">Dashed</option>
+                          <option value="Dotted">Dotted</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 7. Canvas Background Accordion */}
+                <div className="border border-slate-900 bg-slate-900/10 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setOpenSection(openSection === "bg" ? null : "bg")}
+                    className="w-full px-4 py-3 flex items-center justify-between font-bold text-white hover:bg-slate-900/40 transition-all text-xs"
+                  >
+                    <span>Canvas Background & Format</span>
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${openSection === "bg" ? "rotate-90" : ""}`} />
+                  </button>
+
+                  {openSection === "bg" && (
+                    <div className="p-4 border-t border-slate-900 space-y-4 bg-slate-950/50">
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Background Template</label>
+                        <select
+                          value={settings.backgroundTemplate || "Dotted grid"}
+                          onChange={(e) => handleSettingsChange("backgroundTemplate", e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-slate-200 cursor-pointer focus:outline-none"
+                        >
+                          <option value="Dotted grid">Dotted Grid</option>
+                          <option value="Grid">Solid Grid Lines</option>
+                          <option value="Blueprint">Blueprint (Navy blue grid)</option>
+                          <option value="White">Plain White (Reports)</option>
+                          <option value="Light gray">Plain Light Gray</option>
+                          <option value="Dark">Plain Dark Slate</option>
+                          <option value="Transparent">Transparent</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 8. Presets CRUD Manager Accordion */}
+                <div className="border border-slate-900 bg-slate-900/10 rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setOpenSection(openSection === "presets" ? null : "presets")}
+                    className="w-full px-4 py-3 flex items-center justify-between font-bold text-white hover:bg-slate-900/40 transition-all text-xs"
+                  >
+                    <span>Saved Presets & Templates</span>
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${openSection === "presets" ? "rotate-90" : ""}`} />
+                  </button>
+
+                  {openSection === "presets" && (
+                    <div className="p-4 border-t border-slate-900 space-y-4.5 bg-slate-950/50">
+                      
+                      {/* Presets List */}
+                      {presets.length === 0 ? (
+                        <div className="text-[10px] text-slate-500 italic text-center py-2">No custom presets saved yet.</div>
+                      ) : (
+                        <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                          {presets.map((p) => (
+                            <div key={p.id} className="flex items-center justify-between gap-2 p-2 bg-slate-900/60 border border-slate-850 rounded-lg hover:border-slate-700 transition-all">
+                              <button
+                                onClick={() => handleLoadPreset(p)}
+                                className="flex-1 text-left text-slate-200 font-semibold truncate hover:text-white"
+                              >
+                                {p.name}
+                              </button>
+                              <button
+                                onClick={() => handleDeletePreset(p.id, p.name)}
+                                className="text-slate-500 hover:text-red-400 p-1 cursor-pointer transition-all"
+                                title="Delete preset"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="border-t border-slate-900 pt-3 mt-1.5">
+                        <form onSubmit={handleSavePreset} className="space-y-2">
+                          <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Save Current Style</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newPresetName}
+                              onChange={(e) => setNewPresetName(e.target.value)}
+                              placeholder="e.g. 'My Corporate Light'..."
+                              className="flex-1 px-2.5 py-1.5 bg-slate-900 border border-slate-850 rounded-lg text-xs placeholder:text-slate-650 focus:outline-none focus:ring-1 focus:ring-primary text-slate-200"
+                            />
+                            <button
+                              type="submit"
+                              disabled={!newPresetName.trim()}
+                              className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg text-[10.5px] font-bold cursor-pointer transition-all"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
               </div>
             )}
 
@@ -1128,7 +2092,7 @@ export default function WorkspacePage() {
                 <textarea
                   value={jsonText}
                   onChange={(e) => handleCodeChange(e.target.value)}
-                  className="flex-1 w-full bg-slate-900 border border-slate-850 rounded-xl p-3.5 font-mono text-[9.5px] text-slate-350 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none overflow-y-auto leading-normal h-full"
+                  className="flex-1 w-full bg-slate-900 border border-slate-850 rounded-xl p-3.5 font-mono text-[9.5px] text-slate-355 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none overflow-y-auto leading-normal h-full"
                 />
               </div>
             )}
@@ -1186,17 +2150,18 @@ export default function WorkspacePage() {
             <DiagramCanvas
               nodes={nodes}
               edges={edges}
-              onNodesChange={handleNodesChangeWrapper}
-              onEdgesChange={handleEdgesChangeWrapper}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onSelectNode={handleSelectNode}
               onSelectEdge={handleSelectEdge}
               theme={theme}
+              settings={settings}
             />
           </div>
         </div>
 
-        {/* Right side: properties inspector */}
+        {/* Right side: properties inspector panel */}
         <PropertiesPanel
           selectedNode={selectedNode}
           selectedEdge={selectedEdge}
