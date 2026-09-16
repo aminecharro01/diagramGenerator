@@ -4,7 +4,18 @@ export interface DiagramNode {
   type: string; // service, database, user, external, cache, queue, decision, process, entity, etc.
   description?: string;
   position: { x: number; y: number };
-  metadata?: Record<string, any>;
+  targetPosition?: any;
+  sourcePosition?: any;
+  metadata?: {
+    tech?: string;
+    layer?: string;
+    badge?: string;
+    status?: "active" | "healthy" | "syncing" | "standby" | string;
+    category?: string;
+    attributes?: Array<{ name: string; type: string; isPk?: boolean; isFk?: boolean }>;
+    methods?: string[];
+    [key: string]: any;
+  };
 }
 
 export interface DiagramEdge {
@@ -13,6 +24,10 @@ export interface DiagramEdge {
   target: string;
   label?: string;
   type?: string;
+  animated?: boolean;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+  style?: Record<string, any>;
 }
 
 export interface DiagramSettings {

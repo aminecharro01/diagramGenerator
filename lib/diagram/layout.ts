@@ -1,11 +1,11 @@
 import dagre from "dagre";
-import { DiagramData } from "@/types/diagram";
+import { DiagramData, DiagramNode, DiagramEdge } from "@/types/diagram";
 
 export function layoutDiagram(diagram: DiagramData, settings?: any): DiagramData {
   const g = new dagre.graphlib.Graph();
 
-  // 1. Get rank direction based on settings or defaults
-  let rankdir = "TB"; // Top-to-bottom as base flowchart default
+  // 1. Resolve Rank Direction based on settings or smart architectural defaults
+  let rankdir = "LR"; // Default to Left-to-Right for rich UML/Cloud architectures
   
   const customDir = settings?.layoutDirection || "";
   if (customDir === "Left → Right" || customDir === "LR" || customDir === "horizontal" || customDir === "Horizontal") {
@@ -17,141 +17,127 @@ export function layoutDiagram(diagram: DiagramData, settings?: any): DiagramData
   } else if (customDir === "Bottom → Top" || customDir === "BT") {
     rankdir = "BT";
   } else {
-    // Smart Defaults based on diagram type
     const diagType = (diagram.type || "").toLowerCase().trim();
     if (
-      diagType === "architecture" || 
-      diagType === "architecture diagram" ||
-      diagType === "erd" || 
-      diagType === "entity relationship diagram (erd)" || 
-      diagType === "database schema" ||
-      diagType === "network diagram" ||
-      diagType === "infrastructure diagram" ||
-      diagType === "system context diagram" ||
-      diagType === "use case diagram"
+      diagType === "flowchart" ||
+      diagType === "activity diagram" ||
+      diagType === "bpmn-style process diagram" ||
+      diagType === "timeline" ||
+      diagType === "organization chart"
     ) {
-      rankdir = "LR"; // Left-to-right for systems, ERD, and context maps
+      rankdir = "TB";
+    } else {
+      rankdir = "LR";
     }
   }
 
-  // Adjust rankdir based on Aspect Ratio formatting presets if no layout direction is chosen explicitly
-  const customRatio = settings?.aspectRatio || "";
-  if (!settings?.layoutDirection) {
-    if (customRatio.includes("Portrait")) {
-      rankdir = "TB"; // Vertical alignment fits Portrait formats perfectly
-    } else if (customRatio.includes("Landscape") || customRatio.includes("16:9") || customRatio.includes("16:10")) {
-      rankdir = "LR"; // Horizontal fits widescreen formats
-    }
+  // 2. Resolve React Flow Handle Positioning
+  let targetPosition = "top";
+  let sourcePosition = "bottom";
+  let defaultSourceHandle = "bottom-out";
+  let defaultTargetHandle = "top-in";
+
+  if (rankdir === "LR") {
+    targetPosition = "left";
+    sourcePosition = "right";
+    defaultSourceHandle = "right-out";
+    defaultTargetHandle = "left-in";
+  } else if (rankdir === "RL") {
+    targetPosition = "right";
+    sourcePosition = "left";
+    defaultSourceHandle = "left-in";
+    defaultTargetHandle = "right-out";
+  } else if (rankdir === "TB") {
+    targetPosition = "top";
+    sourcePosition = "bottom";
+    defaultSourceHandle = "bottom-out";
+    defaultTargetHandle = "top-in";
+  } else if (rankdir === "BT") {
+    targetPosition = "bottom";
+    sourcePosition = "top";
+    defaultSourceHandle = "top-in";
+    defaultTargetHandle = "bottom-out";
   }
 
-  // 2. Node & Connector Spacing
-  let nodeSep = 120;
-  let rankSep = 240;
+  // 3. Node & Connector Spacing tuned for high readability
+  let nodeSep = 90;
+  let rankSep = 180;
   
   const spacing = settings?.nodeSpacing || "Normal";
   if (spacing === "Compact") {
-    nodeSep = 75;
-    rankSep = 150;
+    nodeSep = 60;
+    rankSep = 130;
   } else if (spacing === "Spacious") {
-    nodeSep = 180;
-    rankSep = 320;
+    nodeSep = 140;
+    rankSep = 260;
   } else if (spacing === "Extra Spacious") {
-    nodeSep = 260;
-    rankSep = 450;
+    nodeSep = 200;
+    rankSep = 360;
   }
 
-  // Connector spacing adjusts ranksep
-  const connSpacing = settings?.connectorSpacing || "Normal";
-  if (connSpacing === "Compact") {
-    rankSep = Math.max(rankSep - 40, 100);
-  } else if (connSpacing === "Spacious") {
-    rankSep = Math.max(rankSep + 60, 260);
-  }
-
-  // Readability controller: expands spacing to avoid edge intersection and overlap
-  if (settings?.readability === "Highly Readable" || settings?.autoOptimizeReadability) {
-    nodeSep = Math.max(nodeSep, 160);
-    rankSep = Math.max(rankSep, 300);
-  }
-
+  // Configure Dagre Graph with optimal layout parameters
   g.setGraph({
     rankdir: rankdir,
     nodesep: nodeSep,
     edgesep: 50,
     ranksep: rankSep,
+    ranker: "network-simplex",
+    align: "UL",
   });
 
   g.setDefaultEdgeLabel(() => ({}));
 
-  // Add nodes to graph layout calculation
-  diagram.nodes.forEach((node) => {
-    // Dynamic node size based on nodeDesign, detail level, and nodeSize configuration
-    let width = 240;
-    let height = 90;
+  // Helper to calculate exact bounding box dimensions for Dagre layout
+  const computeNodeDimensions = (node: DiagramNode) => {
+    let width = 250;
+    let height = 95;
 
-    const nodeDesignSetting = settings?.nodeDesign || "";
-    const nodeDetailSetting = settings?.nodeDetail || settings?.detailLevel || "";
-    const nodeSizeSetting = node.metadata?.nodeSize || settings?.nodeSize || "md";
-
-    // base sizing from node design choice
-    if (nodeDesignSetting.includes("Compact") || nodeDetailSetting === "Minimal" || nodeDetailSetting === "Compact") {
-      width = 190;
-      height = 70;
-    } else if (nodeDesignSetting.includes("Detailed") || nodeDetailSetting === "Detailed") {
-      width = 280;
-      height = 110;
-    } else if (nodeDetailSetting === "Very Detailed") {
-      width = 330;
-      height = 145;
-    }
-
-    if (nodeDesignSetting.includes("Icon above") || nodeDesignSetting.includes("above")) {
-      // Sizing for Icon above + Text below (taller but narrower)
-      width = 160;
-      height = 130;
-    } else if (nodeDesignSetting.includes("Icon only") || nodeDesignSetting === "Icon only") {
-      width = 80;
-      height = 80;
-    } else if (nodeDesignSetting.includes("Text only") || nodeDesignSetting === "Text only") {
-      width = 180;
-      height = 65;
-    }
-
-    // Adapt sizing for specialized block types
     const nodeType = (node.type || "").toLowerCase();
-    if (nodeType === "entity" || nodeType === "database schema" || nodeType === "class") {
-      width = 280;
+
+    if (nodeType === "usecase") {
+      width = 240;
+      height = 70;
+    } else if (nodeType === "actor" || nodeType === "user") {
+      width = 160;
+      height = 120;
+    } else if (nodeType === "class") {
+      width = 290;
       const attrs = node.metadata?.attributes || [];
       const methods = node.metadata?.methods || [];
-      // Combine attributes and methods heights
-      height = 75 + (attrs.length + methods.length) * 28;
-    } else if (nodeType === "actor" || nodeType === "user") {
-      width = 150;
-      height = 110;
+      height = 75 + attrs.length * 26 + methods.length * 24;
+    } else if (nodeType === "entity" || nodeType === "database schema") {
+      width = 290;
+      const attrs = node.metadata?.attributes || [];
+      height = 80 + attrs.length * 30;
+    } else if (nodeType === "note") {
+      width = 240;
+      const textLen = (node.description || "").length;
+      height = Math.max(90, Math.min(220, 60 + Math.ceil(textLen / 25) * 18));
     } else if (nodeType === "decision" || nodeType === "gateway") {
-      width = 160;
-      height = 110;
+      width = 170;
+      height = 115;
     } else if (nodeType === "package") {
-      width = 220;
-      height = 130;
+      width = 230;
+      height = 135;
     } else if (nodeType === "milestone") {
-      width = 200;
-      height = 80;
+      width = 210;
+      height = 85;
     }
 
-    // Apply scale multiplier for sizes
-    if (nodeSizeSetting === "sm" || nodeSizeSetting === "small") {
-      width = Math.round(width * 0.85);
-      height = Math.round(height * 0.85);
-    } else if (nodeSizeSetting === "lg" || nodeSizeSetting === "large") {
-      width = Math.round(width * 1.2);
-      height = Math.round(height * 1.2);
+    if (node.metadata?.tech || node.metadata?.layer) {
+      height += 24;
     }
 
+    return { width, height };
+  };
+
+  // Add nodes to Dagre graph
+  diagram.nodes.forEach((node) => {
+    const { width, height } = computeNodeDimensions(node);
     g.setNode(node.id, { width, height });
   });
 
-  // Add edges to mapping
+  // Add edges to Dagre graph
   diagram.edges.forEach((edge) => {
     g.setEdge(edge.source, edge.target);
   });
@@ -159,71 +145,17 @@ export function layoutDiagram(diagram: DiagramData, settings?: any): DiagramData
   // Calculate layout coordinates
   dagre.layout(g);
 
-  // Map calculated values back to nodes
-  const layoutedNodes = diagram.nodes.map((node) => {
+  // Map calculated values back to nodes with directional handle positioning
+  const layoutedNodes: DiagramNode[] = diagram.nodes.map((node) => {
     const dagreNode = g.node(node.id);
     if (!dagreNode) return node;
-    
-    // Recalculate size to offset and center position properly
-    let width = 240;
-    let height = 90;
 
-    const nodeDesignSetting = settings?.nodeDesign || "";
-    const nodeDetailSetting = settings?.nodeDetail || settings?.detailLevel || "";
-    const nodeSizeSetting = node.metadata?.nodeSize || settings?.nodeSize || "md";
-
-    if (nodeDesignSetting.includes("Compact") || nodeDetailSetting === "Minimal" || nodeDetailSetting === "Compact") {
-      width = 190;
-      height = 70;
-    } else if (nodeDesignSetting.includes("Detailed") || nodeDetailSetting === "Detailed") {
-      width = 280;
-      height = 110;
-    } else if (nodeDetailSetting === "Very Detailed") {
-      width = 330;
-      height = 145;
-    }
-
-    if (nodeDesignSetting.includes("Icon above") || nodeDesignSetting.includes("above")) {
-      width = 160;
-      height = 130;
-    } else if (nodeDesignSetting.includes("Icon only") || nodeDesignSetting === "Icon only") {
-      width = 80;
-      height = 80;
-    } else if (nodeDesignSetting.includes("Text only") || nodeDesignSetting === "Text only") {
-      width = 180;
-      height = 65;
-    }
-
-    const nodeType = (node.type || "").toLowerCase();
-    if (nodeType === "entity" || nodeType === "database schema" || nodeType === "class") {
-      width = 280;
-      const attrs = node.metadata?.attributes || [];
-      const methods = node.metadata?.methods || [];
-      height = 75 + (attrs.length + methods.length) * 28;
-    } else if (nodeType === "actor" || nodeType === "user") {
-      width = 150;
-      height = 110;
-    } else if (nodeType === "decision" || nodeType === "gateway") {
-      width = 160;
-      height = 110;
-    } else if (nodeType === "package") {
-      width = 220;
-      height = 130;
-    } else if (nodeType === "milestone") {
-      width = 200;
-      height = 80;
-    }
-
-    if (nodeSizeSetting === "sm" || nodeSizeSetting === "small") {
-      width = Math.round(width * 0.85);
-      height = Math.round(height * 0.85);
-    } else if (nodeSizeSetting === "lg" || nodeSizeSetting === "large") {
-      width = Math.round(width * 1.2);
-      height = Math.round(height * 1.2);
-    }
+    const { width, height } = computeNodeDimensions(node);
 
     return {
       ...node,
+      targetPosition,
+      sourcePosition,
       position: {
         x: Math.round(dagreNode.x - width / 2),
         y: Math.round(dagreNode.y - height / 2),
@@ -231,8 +163,25 @@ export function layoutDiagram(diagram: DiagramData, settings?: any): DiagramData
     };
   });
 
+  // Map edges with proper sourceHandle, targetHandle, and smoothstep routing
+  const preferredConnector = settings?.connectorStyle || "Smart";
+  let edgeType = "smoothstep";
+  if (preferredConnector === "Straight") edgeType = "straight";
+  else if (preferredConnector === "Curved") edgeType = "default";
+  else if (preferredConnector === "Step") edgeType = "step";
+
+  const layoutedEdges: DiagramEdge[] = diagram.edges.map((edge) => {
+    return {
+      ...edge,
+      type: edge.type && edge.type !== "default" ? edge.type : edgeType,
+      sourceHandle: edge.sourceHandle || defaultSourceHandle,
+      targetHandle: edge.targetHandle || defaultTargetHandle,
+    };
+  });
+
   return {
     ...diagram,
     nodes: layoutedNodes,
+    edges: layoutedEdges,
   };
 }

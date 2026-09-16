@@ -1,11 +1,15 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useEffect } from "react";
 import { 
-  ReactFlow, Background, Controls, MiniMap, BackgroundVariant,
+  ReactFlow, Background, Controls, MiniMap, BackgroundVariant, useReactFlow,
   type Node, type Edge, type OnNodesChange, type OnEdgesChange, type Connection
 } from "@xyflow/react";
 
 import StandardNode from "./nodes/StandardNode";
 import EntityNode from "./nodes/EntityNode";
+import UmlClassNode from "./nodes/UmlClassNode";
+import ActorNode from "./nodes/ActorNode";
+import UseCaseNode from "./nodes/UseCaseNode";
+import NoteNode from "./nodes/NoteNode";
 import ThemedEdge from "./edges/ThemedEdge";
 
 interface DiagramCanvasProps {
@@ -17,7 +21,23 @@ interface DiagramCanvasProps {
   onSelectNode: (node: Node | null) => void;
   onSelectEdge: (edge: Edge | null) => void;
   theme?: "light" | "dark";
-  settings?: any; // Customizable visual settings configuration payload
+  settings?: any;
+}
+
+// Inner helper component that triggers auto-fit on diagram changes
+function AutoFitHandler({ nodesLength }: { nodesLength: number }) {
+  const { fitView } = useReactFlow();
+
+  useEffect(() => {
+    if (nodesLength > 0) {
+      const timer = setTimeout(() => {
+        fitView({ padding: 0.15, duration: 400 });
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [nodesLength, fitView]);
+
+  return null;
 }
 
 export default function DiagramCanvas({
@@ -52,18 +72,42 @@ export default function DiagramCanvas({
       queue: StandardNode,
       user: StandardNode,
       external: StandardNode,
-      actor: StandardNode,
+      actor: ActorNode,
+      usecase: UseCaseNode,
+      class: UmlClassNode,
+      note: NoteNode,
+      entity: EntityNode,
+      system: StandardNode,
       decision: StandardNode,
       gateway: StandardNode,
       start: StandardNode,
       event: StandardNode,
       end: StandardNode,
-      entity: EntityNode,
       frontend: StandardNode,
       backend: StandardNode,
       api: StandardNode,
       task: StandardNode,
       process: StandardNode,
+      package: StandardNode,
+      component: StandardNode,
+      interface: StandardNode,
+      device: StandardNode,
+      node: StandardNode,
+      state: StandardNode,
+      choice: StandardNode,
+      fork: StandardNode,
+      join: StandardNode,
+      milestone: StandardNode,
+      topic: StandardNode,
+      subtopic: StandardNode,
+      router: StandardNode,
+      switch: StandardNode,
+      firewall: StandardNode,
+      compute: StandardNode,
+      storage: StandardNode,
+      manager: StandardNode,
+      employee: StandardNode,
+      department: StandardNode,
     }),
     []
   );
@@ -97,42 +141,26 @@ export default function DiagramCanvas({
   
   let gridColor = theme === "dark" ? "#1e293b" : "#cbd5e1";
   if (bgTemplate === "Blueprint") {
-    gridColor = "rgba(56, 189, 248, 0.06)"; // Blueprint lines opacity color
+    gridColor = "rgba(56, 189, 248, 0.06)";
   }
 
-  // 3. Resolve Aspect Ratio boundaries presets
+  // 3. Aspect Ratio container - made flexible so large diagrams are never clipped or hidden
   const ratio = settings.aspectRatio || "Web (16:9) / Freeform";
-  let ratioStyle: React.CSSProperties = {};
-  let ratioClass = "w-full h-full"; // Default is full freeform viewport
+  let ratioStyle: React.CSSProperties = { width: "100%", height: "100%" };
+  let ratioClass = "w-full h-full";
 
-  if (ratio === "16:9") {
-    ratioClass = "w-full max-w-[1060px] aspect-[16/9] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
-  } else if (ratio === "16:10") {
-    ratioClass = "w-full max-w-[1060px] aspect-[16/10] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
-  } else if (ratio === "4:3") {
-    ratioClass = "w-full max-w-[850px] aspect-[4/3] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
-  } else if (ratio === "1:1") {
-    ratioClass = "w-full max-w-[700px] aspect-square shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
-  } else if (ratio === "A4 Portrait" || ratio === "A3 Portrait" || ratio === "Letter Portrait") {
-    ratioClass = "w-full max-w-[650px] aspect-[1/1.414] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
-  } else if (ratio === "A4 Landscape" || ratio === "A3 Landscape" || ratio === "Letter Landscape") {
-    ratioClass = "w-full max-w-[920px] aspect-[1.414/1] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
-  } else if (ratio === "9:16") {
-    ratioClass = "w-full max-w-[400px] aspect-[9/16] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
-  } else if (ratio === "4:5") {
-    ratioClass = "w-full max-w-[500px] aspect-[4/5] shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
-  } else if (ratio === "Custom") {
-    const customW = settings.aspectRatioCustom?.width || 800;
-    const customH = settings.aspectRatioCustom?.height || 600;
+  if (ratio === "Custom") {
+    const customW = settings.aspectRatioCustom?.width || 1200;
+    const customH = settings.aspectRatioCustom?.height || 800;
     ratioStyle = { width: `${customW}px`, height: `${customH}px` };
-    ratioClass = "shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg overflow-hidden";
+    ratioClass = "shadow-2xl border border-slate-200/50 dark:border-slate-800/50 rounded-lg";
   }
 
   const customBgColor = settings.customColors?.background;
 
   return (
     <div 
-      className={`w-full h-full flex-1 flex items-center justify-center p-6 overflow-auto transition-colors duration-200 ${bgClass}`}
+      className={`w-full h-full flex-1 relative overflow-hidden transition-colors duration-200 ${bgClass}`}
       style={customBgColor ? { backgroundColor: customBgColor } : undefined}
     >
       <div className={`relative ${ratioClass}`} style={ratioStyle}>
@@ -148,6 +176,9 @@ export default function DiagramCanvas({
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
+          fitViewOptions={{ padding: 0.15, includeHiddenNodes: false }}
+          minZoom={0.05}
+          maxZoom={2.5}
           snapToGrid
           snapGrid={[15, 15]}
           defaultEdgeOptions={{
@@ -155,6 +186,7 @@ export default function DiagramCanvas({
             style: { strokeWidth: 2 },
           }}
         >
+          <AutoFitHandler nodesLength={nodes.length} />
           {showGrid && (
             <Background 
               variant={gridVariant} 
@@ -163,11 +195,11 @@ export default function DiagramCanvas({
               color={gridColor} 
             />
           )}
-          <Controls showInteractive={false} className="shadow-2xl" />
+          <Controls showInteractive={false} className="shadow-2xl !bg-slate-900 !border-slate-800" />
           <MiniMap 
             nodeColor={() => "#6366f1"}
             maskColor="rgba(15, 23, 42, 0.6)"
-            className="hidden sm:block shadow-2xl" 
+            className="hidden sm:block shadow-2xl !bg-slate-950 !border-slate-800" 
           />
         </ReactFlow>
       </div>

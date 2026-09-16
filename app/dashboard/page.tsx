@@ -4,10 +4,13 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { parsePlantUml } from "@/lib/diagram/plantuml-parser";
+import SamplesModal from "@/components/workspace/samples-modal";
 import { 
   Sparkles, Plus, Search, LogOut, Settings, Layout, Clock, 
   Trash2, Edit2, Share2, ArrowRight, Loader2, Database, GitCommit,
-  GitBranch, HelpCircle, X, ChevronRight, Activity, Grid, AlertCircle
+  GitBranch, HelpCircle, X, ChevronRight, Activity, Grid, AlertCircle,
+  BookOpen
 } from "lucide-react";
 
 interface Diagram {
@@ -34,6 +37,7 @@ export default function DashboardPage() {
 
   // New Diagram modal state
   const [newModalOpen, setNewModalOpen] = useState(false);
+  const [samplesModalOpen, setSamplesModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("Untitled Diagram");
   const [newType, setNewType] = useState("flowchart");
   const [newPrompt, setNewPrompt] = useState("");
@@ -153,6 +157,35 @@ export default function DashboardPage() {
       setGenError(err.message || "An error occurred.");
     } finally {
       setGenLoading(false);
+    }
+  };
+
+  const handleCreateFromPuml = async (pumlText: string, sampleTitle?: string) => {
+    try {
+      setLoading(true);
+      const parsed = parsePlantUml(pumlText);
+      const title = sampleTitle || parsed.title || "E-Learning Diagram";
+
+      const res = await fetch("/api/diagrams", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          description: `IAT Academy E-Learning diagram (${parsed.type})`,
+          diagramType: parsed.type || "architecture diagram",
+          prompt: `Imported from ${title}`,
+          diagramData: parsed,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create diagram");
+
+      showToast(`Created "${title}" workspace!`);
+      router.push(`/workspace/${data.diagram.id}`);
+    } catch (err: any) {
+      showToast(err.message || "Failed to import diagram", "error");
+      setLoading(false);
     }
   };
 
@@ -301,13 +334,24 @@ export default function DashboardPage() {
             <p className="text-xs text-slate-400 mt-1">Manage and refine your system architecture diagrams.</p>
           </div>
 
-          <button
-            onClick={() => setNewModalOpen(true)}
-            className="py-2.5 px-4 bg-primary hover:bg-primary/95 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer shrink-0"
-          >
-            <Plus className="h-4 w-4" />
-            <span>New Diagram</span>
-          </button>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              onClick={() => setSamplesModalOpen(true)}
+              className="py-2.5 px-4 bg-indigo-600/15 hover:bg-indigo-600/25 border border-indigo-500/30 text-indigo-300 hover:text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+              title="Browse and load all 14 IAT Academy E-Learning diagrams"
+            >
+              <BookOpen className="h-4 w-4 text-indigo-400" />
+              <span>E-Learning Library (14)</span>
+            </button>
+
+            <button
+              onClick={() => setNewModalOpen(true)}
+              className="py-2.5 px-4 bg-primary hover:bg-primary/95 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              <span>New Diagram</span>
+            </button>
+          </div>
         </div>
 
         {/* Dashboard Actions Bar */}
@@ -672,6 +716,14 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* --- E-LEARNING SAMPLES & IMPORT MODAL --- */}
+      <SamplesModal
+        isOpen={samplesModalOpen}
+        onClose={() => setSamplesModalOpen(false)}
+        onSelectPuml={handleCreateFromPuml}
+        showToast={showToast}
+      />
     </div>
   );
 }

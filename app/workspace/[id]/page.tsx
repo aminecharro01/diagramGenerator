@@ -10,16 +10,19 @@ import { createClient } from "@/lib/supabase/client";
 import { DiagramData, DiagramSettings } from "@/types/diagram";
 import { layoutDiagram } from "@/lib/diagram/layout";
 import { downloadJson, downloadSvg, downloadPng } from "@/lib/diagram/export";
+import { parsePlantUml } from "@/lib/diagram/plantuml-parser";
 
 import DiagramCanvas from "@/components/workspace/canvas/diagram-canvas";
 import PropertiesPanel from "@/components/workspace/properties-panel";
+import ExportModal from "@/components/workspace/export-modal";
+import SamplesModal from "@/components/workspace/samples-modal";
 
 import { 
   Sparkles, ArrowLeft, Loader2, Undo, Redo, ZoomIn, ZoomOut, Maximize, 
   Play, Save, ChevronRight, Layout, Settings, Share2, Download, Copy,
   Check, AlertCircle, RefreshCw, History, Code, MessageSquare, Shield,
   Globe, X, Terminal, Sun, Moon, Database, HelpCircle, Layers, Folder,
-  Plus, Trash2, Clock, AlignJustify
+  Plus, Trash2, Clock, AlignJustify, BookOpen, Upload, FileCode
 } from "lucide-react";
 
 function ServerIcon(props: any) { return <span className="text-[10px]">🖥️</span>; }
@@ -120,8 +123,9 @@ export default function WorkspacePage() {
   const [versions, setVersions] = useState<any[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
 
-  // Export dropdown
-  const [exportOpen, setExportOpen] = useState(false);
+  // Export & Samples Modals
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [samplesModalOpen, setSamplesModalOpen] = useState(false);
 
   // Theme and legacy scaling states
   const [theme, setTheme] = useState<"light" | "dark">("dark");
@@ -297,20 +301,24 @@ export default function WorkspacePage() {
         else if (settings.lineThickness === "Thick") strokeWidth = 3.5;
 
         // Route curved vs straight vs step routers
-        const connStyle = (settings.connectorStyle || "default").toLowerCase();
+        const connStyle = (settings.connectorStyle || "smart").toLowerCase();
         let edgeType = "smoothstep";
-        if (connStyle === "curved" || connStyle === "smart") edgeType = "default";
+        if (connStyle === "curved") edgeType = "default";
         else if (connStyle === "straight") edgeType = "straight";
         else if (connStyle === "step" || connStyle === "elbow") edgeType = "step";
+        else if (connStyle === "smart" || connStyle === "smooth") edgeType = "smoothstep";
+
+        const hasCustomDash = settings.lineType === "Dashed" || settings.lineType === "Dotted";
 
         return {
           ...edge,
-          type: edgeType,
+          type: edge.type || edgeType,
+          animated: edge.animated,
           style: {
             ...edge.style,
             stroke: strokeColor,
             strokeWidth: strokeWidth,
-            strokeDasharray: strokeDasharray,
+            strokeDasharray: hasCustomDash ? strokeDasharray : (edge.style?.strokeDasharray || strokeDasharray),
           },
           markerEnd: {
             type: MarkerType.ArrowClosed,
@@ -349,6 +357,8 @@ export default function WorkspacePage() {
         type: n.type || "service",
         description: (n.data?.description as string) || "",
         position: n.position,
+        targetPosition: n.targetPosition,
+        sourcePosition: n.sourcePosition,
         metadata: (n.data?.metadata as Record<string, any>) || {},
       }));
 
@@ -356,8 +366,12 @@ export default function WorkspacePage() {
         id: e.id,
         source: e.source,
         target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
         label: typeof e.label === "string" ? e.label : "",
         type: e.type || "default",
+        animated: e.animated,
+        style: e.style,
       }));
 
       const diagramData: DiagramData = {
@@ -418,6 +432,61 @@ export default function WorkspacePage() {
     setFuture([]);
   }, []);
 
+  // PlantUML and sample diagram loader
+  const handleLoadPuml = useCallback((pumlCode: string, sampleTitle?: string) => {
+    try {
+      const parsed = parsePlantUml(pumlCode);
+      const diagramTitle = sampleTitle || parsed.title || title;
+      
+      const layouted = layoutDiagram({
+        ...parsed,
+        title: diagramTitle,
+        settings: settings,
+      }, settings);
+
+      const mappedNodes: Node[] = layouted.nodes.map((n) => ({
+        id: n.id,
+        type: n.type,
+        data: {
+          label: n.label,
+          description: n.description,
+          metadata: n.metadata,
+          type: n.type,
+          settings: settings,
+        },
+        position: n.position || { x: 0, y: 0 },
+        targetPosition: n.targetPosition,
+        sourcePosition: n.sourcePosition,
+      }));
+
+      const mappedEdges: Edge[] = layouted.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+        label: e.label,
+        type: e.type || "default",
+        animated: e.animated,
+        style: e.style,
+        markerEnd: { type: MarkerType.ArrowClosed, color: theme === "dark" ? "#64748b" : "#94a3b8" },
+      }));
+
+      pushToHistory(nodes, edges);
+      setNodes(mappedNodes);
+      setEdges(mappedEdges);
+      setTitle(diagramTitle);
+      setDiagramType(parsed.type || "architecture diagram");
+      setJsonText(JSON.stringify(layouted, null, 2));
+
+      saveToServer(mappedNodes, mappedEdges, diagramTitle, true, `Loaded: ${diagramTitle}`);
+      showToast(`Loaded "${diagramTitle}" successfully!`);
+    } catch (err: any) {
+      console.error("Failed to load PlantUML diagram:", err);
+      showToast(`Failed to parse PlantUML: ${err.message}`, "error");
+    }
+  }, [nodes, edges, settings, theme, title, pushToHistory, saveToServer]);
+
   // Fetch Diagram Details on Mount
   useEffect(() => {
     const fetchDetails = async () => {
@@ -460,14 +529,20 @@ export default function WorkspacePage() {
           type: n.type,
           data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: diagData.settings },
           position: n.position || { x: 0, y: 0 },
+          targetPosition: n.targetPosition,
+          sourcePosition: n.sourcePosition,
         }));
 
         const mappedEdges = (diagData.edges || []).map((e) => ({
           id: e.id,
           source: e.source,
           target: e.target,
+          sourceHandle: e.sourceHandle,
+          targetHandle: e.targetHandle,
           label: e.label,
           type: e.type || "default",
+          animated: e.animated,
+          style: e.style,
           markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
         }));
 
@@ -713,10 +788,21 @@ export default function WorkspacePage() {
       type: n.type,
       data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: settings },
       position: n.position,
+      targetPosition: n.targetPosition,
+      sourcePosition: n.sourcePosition,
+    }));
+
+    const reEdges = reCalculated.edges.map((e) => ({
+      ...e,
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
+      animated: e.animated,
+      markerEnd: { type: MarkerType.ArrowClosed, color: theme === "dark" ? "#64748b" : "#94a3b8" },
     }));
 
     setNodes(reNodes);
-    saveToServer(reNodes, edges, title);
+    setEdges(reEdges);
+    saveToServer(reNodes, reEdges, title);
     showToast("Re-aligned layout nodes.");
   };
 
@@ -785,15 +871,21 @@ export default function WorkspacePage() {
         type: n.type,
         data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: settings },
         position: n.position,
+        targetPosition: n.targetPosition,
+        sourcePosition: n.sourcePosition,
       }));
 
       const refinedEdges = (refinedData.edges || []).map((e) => ({
         id: e.id,
         source: e.source,
         target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
         label: e.label,
         type: e.type || "default",
-        markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
+        animated: e.animated,
+        style: e.style,
+        markerEnd: { type: MarkerType.ArrowClosed, color: theme === "dark" ? "#64748b" : "#94a3b8" },
       }));
 
       pushToHistory(nodes, edges);
@@ -857,14 +949,20 @@ export default function WorkspacePage() {
         type: n.type,
         data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: settings },
         position: n.position,
+        targetPosition: n.targetPosition,
+        sourcePosition: n.sourcePosition,
       }));
 
       const newEdges = (generated.edges || []).map((e) => ({
         id: e.id,
         source: e.source,
         target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
         label: e.label,
         type: e.type || "default",
+        animated: e.animated,
+        style: e.style,
         markerEnd: { type: MarkerType.ArrowClosed, color: theme === "dark" ? "#64748b" : "#94a3b8" },
       }));
 
@@ -905,14 +1003,20 @@ export default function WorkspacePage() {
         type: n.type || "service",
         data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: settings },
         position: n.position || { x: 0, y: 0 },
+        targetPosition: n.targetPosition,
+        sourcePosition: n.sourcePosition,
       }));
 
       const parsedEdges = parsed.edges.map((e) => ({
         id: e.id || `edge-${e.source}-${e.target}`,
         source: e.source,
         target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
         label: e.label,
         type: e.type || "default",
+        animated: e.animated,
+        style: e.style,
         markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
       }));
 
@@ -935,14 +1039,20 @@ export default function WorkspacePage() {
       type: n.type,
       data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: diagData.settings || settings },
       position: n.position,
+      targetPosition: n.targetPosition,
+      sourcePosition: n.sourcePosition,
     }));
 
     const mappedEdges = (diagData.edges || []).map((e) => ({
       id: e.id,
       source: e.source,
       target: e.target,
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
       label: e.label,
       type: e.type || "default",
+      animated: e.animated,
+      style: e.style,
       markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
     }));
 
@@ -1054,10 +1164,21 @@ export default function WorkspacePage() {
         type: n.type,
         data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: preset.settings },
         position: n.position,
+        targetPosition: n.targetPosition,
+        sourcePosition: n.sourcePosition,
+      }));
+
+      const mappedEdges = reCalculated.edges.map((e) => ({
+        ...e,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+        animated: e.animated,
+        markerEnd: { type: MarkerType.ArrowClosed, color: theme === "dark" ? "#64748b" : "#94a3b8" },
       }));
 
       setNodes(mappedNodes);
-      saveToServer(mappedNodes, edges, title);
+      setEdges(mappedEdges);
+      saveToServer(mappedNodes, mappedEdges, title);
     }, 100);
 
     showToast(`Loaded preset "${preset.name}".`);
@@ -1114,10 +1235,21 @@ export default function WorkspacePage() {
         type: n.type,
         data: { label: n.label, description: n.description, metadata: n.metadata, type: n.type, settings: updatedSettings },
         position: n.position,
+        targetPosition: n.targetPosition,
+        sourcePosition: n.sourcePosition,
+      }));
+
+      const mappedEdges = reCalculated.edges.map((e) => ({
+        ...e,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+        animated: e.animated,
+        markerEnd: { type: MarkerType.ArrowClosed, color: theme === "dark" ? "#64748b" : "#94a3b8" },
       }));
 
       setNodes(mappedNodes);
-      saveToServer(mappedNodes, edges, title);
+      setEdges(mappedEdges);
+      saveToServer(mappedNodes, mappedEdges, title);
     }, 100);
 
     showToast("Optimized coordinates spacing for A4 printing.");
@@ -1255,9 +1387,19 @@ export default function WorkspacePage() {
             </select>
           </div>
 
+          {/* Samples & Import Modal Trigger */}
+          <button
+            onClick={() => setSamplesModalOpen(true)}
+            className="py-1.5 px-3 bg-indigo-600/15 hover:bg-indigo-600/25 border border-indigo-500/30 text-indigo-300 hover:text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
+            title="Open E-learning diagrams library or import PlantUML"
+          >
+            <BookOpen className="h-3.5 w-3.5 text-indigo-400" />
+            <span>Library & Import</span>
+          </button>
+
           <button
             onClick={handleAutoLayout}
-            className="py-1.5 px-3 bg-slate-900 hover:bg-slate-850 border border-slate-855 rounded-xl text-xs font-semibold text-slate-355 flex items-center gap-1.5 cursor-pointer transition-all"
+            className="py-1.5 px-3 bg-slate-900 hover:bg-slate-850 border border-slate-850 rounded-xl text-xs font-semibold text-slate-300 flex items-center gap-1.5 cursor-pointer transition-all"
             title="Auto layout with Dagre engine"
           >
             <Layout className="h-3.5 w-3.5" />
@@ -1272,85 +1414,14 @@ export default function WorkspacePage() {
             <span>Share</span>
           </button>
 
-          {/* Export dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setExportOpen(!exportOpen)}
-              className="py-1.5 px-3 bg-primary hover:bg-primary/95 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-md shadow-primary/10 cursor-pointer transition-all"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span>Export</span>
-            </button>
-
-            {exportOpen && (
-              <div className="absolute right-0 mt-2.5 w-48 bg-card border border-border rounded-xl shadow-2xl py-1.5 z-[90] text-xs">
-                <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none border-b border-slate-900 mb-1">
-                  Export PNG
-                </div>
-                <button
-                  onClick={() => {
-                    downloadPng(`${title}_1x.png`, 1);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-1.5 hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  PNG (1x Quality)
-                </button>
-                <button
-                  onClick={() => {
-                    downloadPng(`${title}_2x.png`, 2);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-1.5 hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  PNG (2x Quality)
-                </button>
-                <button
-                  onClick={() => {
-                    downloadPng(`${title}_4x.png`, 4);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-1.5 hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  PNG (4x Quality)
-                </button>
-                <div className="border-t border-slate-900 my-1"></div>
-                <button
-                  onClick={() => {
-                    downloadSvg(`${title}.svg`);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-2 hover:bg-slate-900 text-slate-350 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  Download SVG
-                </button>
-                <button
-                  onClick={() => {
-                    const cleanNodes = nodes.map((n) => ({
-                      id: n.id,
-                      label: (n.data?.label as string) || "",
-                      type: n.type || "service",
-                      description: (n.data?.description as string) || "",
-                      position: n.position,
-                      metadata: (n.data?.metadata as Record<string, any>) || {},
-                    }));
-                    const cleanEdges = edges.map((e) => ({
-                      id: e.id,
-                      source: e.source,
-                      target: e.target,
-                      label: typeof e.label === "string" ? e.label : "",
-                      type: e.type || "default",
-                    }));
-                    downloadJson({ title, type: diagramType, nodes: cleanNodes, edges: cleanEdges, settings: settings }, `${title}.json`);
-                    setExportOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-2 hover:bg-slate-900 text-slate-350 hover:text-white transition-all cursor-pointer font-medium"
-                >
-                  Download JSON
-                </button>
-              </div>
-            )}
-          </div>
+          {/* Export button */}
+          <button
+            onClick={() => setExportModalOpen(true)}
+            className="py-1.5 px-3.5 bg-primary hover:bg-primary/95 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md shadow-primary/20 cursor-pointer transition-all"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>Export</span>
+          </button>
         </div>
       </header>
 
@@ -2257,6 +2328,45 @@ export default function WorkspacePage() {
           </div>
         </div>
       )}
+
+      {/* --- EXPORT MODAL --- */}
+      <ExportModal
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        title={title}
+        diagramData={{
+          title,
+          type: diagramType,
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            label: (n.data?.label as string) || "",
+            type: n.type || "service",
+            description: (n.data?.description as string) || "",
+            position: n.position,
+            metadata: (n.data?.metadata as Record<string, any>) || {},
+          })),
+          edges: edges.map((e) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            label: typeof e.label === "string" ? e.label : "",
+            type: e.type || "default",
+            animated: e.animated,
+            style: e.style,
+          })),
+          settings,
+        }}
+        theme={theme}
+        showToast={showToast}
+      />
+
+      {/* --- SAMPLES & PLANTUML IMPORT MODAL --- */}
+      <SamplesModal
+        isOpen={samplesModalOpen}
+        onClose={() => setSamplesModalOpen(false)}
+        onSelectPuml={handleLoadPuml}
+        showToast={showToast}
+      />
     </div>
   );
 }

@@ -12,59 +12,95 @@ interface RefineParams {
   instruction: string;
 }
 
+import fs from "fs";
+import path from "path";
+
+function getEnvConfig() {
+  const env: Record<string, string> = {};
+  try {
+    const envPath = path.resolve(process.cwd(), ".env.local");
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+          const idx = trimmed.indexOf("=");
+          if (idx !== -1) {
+            env[trimmed.substring(0, idx).trim()] = trimmed.substring(idx + 1).trim();
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  const apiKey = process.env.AI_API_KEY || env.AI_API_KEY;
+  const baseUrl = process.env.AI_BASE_URL || env.AI_BASE_URL || "https://api.openai.com/v1";
+  const model = process.env.AI_MODEL || env.AI_MODEL || "gpt-4o-mini";
+
+  return { apiKey, baseUrl, model };
+}
+
 export async function callAI(
   systemPrompt: string,
   userPrompt: string
 ): Promise<DiagramData> {
-  const apiKey = process.env.AI_API_KEY;
-  const baseUrl = process.env.AI_BASE_URL || "https://api.openai.com/v1";
-  const model = process.env.AI_MODEL || "gpt-4o-mini";
+  const { apiKey, baseUrl, model } = getEnvConfig();
 
-  // Check if API key is mock or missing, and trigger offline intelligent generator
-  if (!apiKey || apiKey.includes("mock-ai-key-placeholder") || apiKey === "") {
-    return generateOfflineFallback(userPrompt, systemPrompt);
+  if (!apiKey || apiKey.includes("mock-ai-key-placeholder") || apiKey.trim() === "") {
+    throw new Error(
+      "AI API Key is not configured. Please add your AI_API_KEY in .env.local and verify your API credentials."
+    );
+  }
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.2,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`AI API call failed [${response.status}]:`, errorText);
+    throw new Error(`AI API returned error (${response.status}): ${errorText}`);
+  }
+
+  const result = await response.json();
+  const rawContent = result.choices?.[0]?.message?.content;
+  if (!rawContent) {
+    throw new Error("Empty response returned by the AI provider.");
+  }
+
+  // Extract JSON payload cleanly, stripping code fences or extra conversational text
+  let cleanJson = rawContent.trim();
+  const codeBlockMatch = cleanJson.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (codeBlockMatch) {
+    cleanJson = codeBlockMatch[1].trim();
+  } else {
+    const firstBrace = cleanJson.indexOf("{");
+    const lastBrace = cleanJson.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+    }
   }
 
   try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.2,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`AI API failed: ${response.status} - ${errorText}`);
-    }
-
-    const result = await response.json();
-    const rawContent = result.choices?.[0]?.message?.content;
-    if (!rawContent) {
-      throw new Error("Empty response from AI engine.");
-    }
-
-    // Clean up content just in case the LLM returned markdown code fences
-    let cleanJson = rawContent.trim();
-    if (cleanJson.startsWith("```")) {
-      cleanJson = cleanJson.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
-    }
-
     const parsedData = JSON.parse(cleanJson);
     return DiagramDataSchema.parse(parsedData);
-  } catch (error) {
-    console.error("AI Generation Error, falling back:", error);
-    // Fall back to offline generation rather than crashing the system
-    return generateOfflineFallback(userPrompt, systemPrompt);
+  } catch (parseError: any) {
+    console.error("Failed to parse AI response into schema:", parseError, "Raw output:", rawContent);
+    throw new Error(`AI response could not be parsed into diagram schema: ${parseError.message}`);
   }
 }
 
@@ -171,19 +207,25 @@ function generateOfflineFallback(prompt: string, systemPrompt: string): DiagramD
   // --- ERD DIAGRAM TEMPLATE ---
   if (lowerPrompt.includes("erd") || lowerPrompt.includes("database") || lowerPrompt.includes("schema") || lowerPrompt.includes("inventory")) {
     return {
-      title: "Inventory Database Model",
+      title: "E-Commerce Database Model",
       type: "erd",
       nodes: assignPositions([
         {
           id: "users",
           label: "users",
           type: "entity",
-          description: "Platform members",
+          description: "Registered platform users and authentication credentials",
           metadata: {
+            tech: "PostgreSQL 16",
+            layer: "IDENTITY",
+            badge: "Core Table",
+            status: "active",
+            category: "database",
             attributes: [
               { name: "id", type: "UUID", isPk: true, isFk: false },
-              { name: "email", type: "VARCHAR", isPk: false, isFk: false },
-              { name: "password_hash", type: "VARCHAR", isPk: false, isFk: false },
+              { name: "email", type: "VARCHAR(255)", isPk: false, isFk: false },
+              { name: "password_hash", type: "VARCHAR(255)", isPk: false, isFk: false },
+              { name: "role", type: "VARCHAR(50)", isPk: false, isFk: false },
               { name: "created_at", type: "TIMESTAMP", isPk: false, isFk: false }
             ]
           }
@@ -192,27 +234,19 @@ function generateOfflineFallback(prompt: string, systemPrompt: string): DiagramD
           id: "orders",
           label: "orders",
           type: "entity",
-          description: "Purchase records",
+          description: "Customer checkout orders and fulfillment state",
           metadata: {
+            tech: "PostgreSQL 16",
+            layer: "COMMERCE",
+            badge: "Partitioned",
+            status: "active",
+            category: "database",
             attributes: [
               { name: "id", type: "UUID", isPk: true, isFk: false },
               { name: "user_id", type: "UUID", isPk: false, isFk: true },
-              { name: "total_amount", type: "DECIMAL", isPk: false, isFk: false },
-              { name: "status", type: "VARCHAR", isPk: false, isFk: false }
-            ]
-          }
-        },
-        {
-          id: "products",
-          label: "products",
-          type: "entity",
-          description: "Warehouse stock items",
-          metadata: {
-            attributes: [
-              { name: "id", type: "UUID", isPk: true, isFk: false },
-              { name: "name", type: "VARCHAR", isPk: false, isFk: false },
-              { name: "price", type: "DECIMAL", isPk: false, isFk: false },
-              { name: "stock_quantity", type: "INTEGER", isPk: false, isFk: false }
+              { name: "total_amount", type: "DECIMAL(10,2)", isPk: false, isFk: false },
+              { name: "status", type: "VARCHAR(50)", isPk: false, isFk: false },
+              { name: "created_at", type: "TIMESTAMP", isPk: false, isFk: false }
             ]
           }
         },
@@ -220,20 +254,47 @@ function generateOfflineFallback(prompt: string, systemPrompt: string): DiagramD
           id: "order_items",
           label: "order_items",
           type: "entity",
-          description: "Order lines linking products",
+          description: "Junction line items linking orders with warehouse products",
           metadata: {
+            tech: "PostgreSQL 16",
+            layer: "COMMERCE",
+            badge: "Junction",
+            status: "active",
+            category: "database",
             attributes: [
-              { name: "order_id", type: "UUID", isPk: true, isFk: true },
-              { name: "product_id", type: "UUID", isPk: true, isFk: true },
-              { name: "quantity", type: "INTEGER", isPk: false, isFk: false }
+              { name: "id", type: "UUID", isPk: true, isFk: false },
+              { name: "order_id", type: "UUID", isPk: false, isFk: true },
+              { name: "product_id", type: "UUID", isPk: false, isFk: true },
+              { name: "quantity", type: "INTEGER", isPk: false, isFk: false },
+              { name: "unit_price", type: "DECIMAL(10,2)", isPk: false, isFk: false }
+            ]
+          }
+        },
+        {
+          id: "products",
+          label: "products",
+          type: "entity",
+          description: "Product catalog inventory and pricing",
+          metadata: {
+            tech: "PostgreSQL 16",
+            layer: "CATALOG",
+            badge: "Indexed",
+            status: "active",
+            category: "database",
+            attributes: [
+              { name: "id", type: "UUID", isPk: true, isFk: false },
+              { name: "sku", type: "VARCHAR(100)", isPk: false, isFk: false },
+              { name: "name", type: "VARCHAR(255)", isPk: false, isFk: false },
+              { name: "price", type: "DECIMAL(10,2)", isPk: false, isFk: false },
+              { name: "stock_quantity", type: "INTEGER", isPk: false, isFk: false }
             ]
           }
         }
       ]),
       edges: [
-        { id: "e1", source: "users", target: "orders", label: "1:N", type: "default" },
-        { id: "e2", source: "orders", target: "order_items", label: "1:N", type: "default" },
-        { id: "e3", source: "products", target: "order_items", label: "1:N", type: "default" }
+        { id: "e1", source: "users", target: "orders", label: "1:N (places)", type: "default" },
+        { id: "e2", source: "orders", target: "order_items", label: "1:N (contains)", type: "default" },
+        { id: "e3", source: "products", target: "order_items", label: "1:N (referenced by)", type: "default" }
       ]
     };
   }
@@ -241,21 +302,45 @@ function generateOfflineFallback(prompt: string, systemPrompt: string): DiagramD
   // --- SEQUENCE DIAGRAM TEMPLATE ---
   if (lowerPrompt.includes("sequence") || lowerPrompt.includes("jwt") || lowerPrompt.includes("auth flow")) {
     return {
-      title: "JWT Authentication Flow",
+      title: "OAuth2 & JWT Authentication Flow",
       type: "sequence",
       nodes: assignPositions([
-        { id: "client", label: "User Client", type: "actor", description: "Browser application" },
-        { id: "gateway", label: "API Gateway", type: "service", description: "Request router" },
-        { id: "auth_srv", label: "Auth Service", type: "service", description: "Token generator" },
-        { id: "user_db", label: "User Database", type: "database", description: "Credential store" }
+        { 
+          id: "client", 
+          label: "Web Browser Client", 
+          type: "actor", 
+          description: "Next.js SPA frontend client",
+          metadata: { tech: "React / Next.js", layer: "CLIENT", status: "active" }
+        },
+        { 
+          id: "gateway", 
+          label: "API Gateway", 
+          type: "api", 
+          description: "Reverse proxy, rate limiting, and SSL termination",
+          metadata: { tech: "Kong / Envoy", layer: "GATEWAY", status: "active" }
+        },
+        { 
+          id: "auth_srv", 
+          label: "Authentication Service", 
+          type: "service", 
+          description: "Validates credentials and mints JWTs",
+          metadata: { tech: "Go / Gin", layer: "MICROSERVICE", badge: "Auth0 / OIDC", status: "active" }
+        },
+        { 
+          id: "user_db", 
+          label: "User Database", 
+          type: "database", 
+          description: "Encrypted credentials and user profile store",
+          metadata: { tech: "PostgreSQL 16", layer: "PERSISTENCE", badge: "Primary", status: "active" }
+        }
       ]),
       edges: [
-        { id: "s1", source: "client", target: "gateway", label: "1. POST /login (credentials)", type: "default" },
-        { id: "s2", source: "gateway", target: "auth_srv", label: "2. ValidateCredentials(email, pwd)", type: "default" },
+        { id: "s1", source: "client", target: "gateway", label: "1. POST /api/auth/login", type: "default" },
+        { id: "s2", source: "gateway", target: "auth_srv", label: "2. Forward creds (gRPC)", type: "default" },
         { id: "s3", source: "auth_srv", target: "user_db", label: "3. QueryUserByEmail(email)", type: "default" },
-        { id: "s4", source: "user_db", target: "auth_srv", label: "4. Return password hash", type: "default" },
-        { id: "s5", source: "auth_srv", target: "gateway", label: "5. Return JWT token", type: "default" },
-        { id: "s6", source: "gateway", target: "client", label: "6. Set JWT cookie & status 200", type: "default" }
+        { id: "s4", source: "user_db", target: "auth_srv", label: "4. Return Argon2 hash", type: "default" },
+        { id: "s5", source: "auth_srv", target: "gateway", label: "5. Sign & Return JWT (RS256)", type: "default" },
+        { id: "s6", source: "gateway", target: "client", label: "6. Set HTTP-only Cookie & 200 OK", type: "default" }
       ]
     };
   }
@@ -263,24 +348,74 @@ function generateOfflineFallback(prompt: string, systemPrompt: string): DiagramD
   // --- ARCHITECTURE DIAGRAM TEMPLATE ---
   if (lowerPrompt.includes("architecture") || lowerPrompt.includes("saas") || lowerPrompt.includes("microservice") || lowerPrompt.includes("aws")) {
     return {
-      title: "SaaS Application Architecture",
+      title: "Cloud-Native SaaS Microservices Architecture",
       type: "architecture",
       nodes: assignPositions([
-        { id: "user", label: "End User", type: "user", description: "Accesses app via browser" },
-        { id: "frontend", label: "Next.js WebApp", type: "frontend", description: "Vercel hosted client app" },
-        { id: "api_gw", label: "Kong API Gateway", type: "api", description: "Rate limiting & route security" },
-        { id: "backend", label: "Node.js Core API", type: "backend", description: "Serverless business logic service" },
-        { id: "cache", label: "Redis Cache", type: "cache", description: "Session & data key store" },
-        { id: "database", label: "PostgreSQL DB", type: "database", description: "Supabase persistence layer" },
-        { id: "stripe", label: "Stripe Billing", type: "external", description: "SaaS subscriptions manager" }
+        { 
+          id: "user", 
+          label: "End Users", 
+          type: "user", 
+          description: "Global web and mobile application consumers",
+          metadata: { tech: "Web & Mobile", layer: "CLIENT", status: "active", category: "frontend" }
+        },
+        { 
+          id: "frontend", 
+          label: "Edge Frontend WebApp", 
+          type: "frontend", 
+          description: "Server-side rendered application deployed on Vercel Edge",
+          metadata: { tech: "Next.js 15 / TypeScript", layer: "PRESENTATION", badge: "Edge SSR", status: "active", category: "frontend" }
+        },
+        { 
+          id: "api_gw", 
+          label: "Kong API Gateway", 
+          type: "api", 
+          description: "Central entrypoint with WAF, rate limits, and JWT verification",
+          metadata: { tech: "Kong Enterprise", layer: "INGRESS", badge: "WAF & Routing", status: "active", category: "external" }
+        },
+        { 
+          id: "core_api", 
+          label: "Core Services API", 
+          type: "backend", 
+          description: "Containerized business logic and orchestration services",
+          metadata: { tech: "FastAPI / Python", layer: "MICROSERVICE", badge: "Kubernetes", status: "active", category: "backend" }
+        },
+        { 
+          id: "event_bus", 
+          label: "Kafka Event Broker", 
+          type: "queue", 
+          description: "Distributed pub/sub event streaming pipeline",
+          metadata: { tech: "Apache Kafka", layer: "EVENT BUS", badge: "Partitioned", status: "active", category: "queue" }
+        },
+        { 
+          id: "cache", 
+          label: "Redis Cache Cluster", 
+          type: "cache", 
+          description: "Sub-millisecond latency distributed memory store",
+          metadata: { tech: "Redis 7 Cluster", layer: "CACHING", badge: "In-Memory", status: "active", category: "cache" }
+        },
+        { 
+          id: "database", 
+          label: "PostgreSQL Aurora DB", 
+          type: "database", 
+          description: "Multi-AZ ACID compliant transactional database",
+          metadata: { tech: "AWS Aurora PostgreSQL", layer: "DATA STORE", badge: "Multi-AZ Primary", status: "active", category: "database" }
+        },
+        { 
+          id: "stripe", 
+          label: "Stripe Billing Platform", 
+          type: "external", 
+          description: "PCI-DSS compliant subscription billing and webhooks",
+          metadata: { tech: "Stripe API v2024", layer: "EXTERNAL", badge: "PCI-DSS", status: "active", category: "external" }
+        }
       ]),
       edges: [
-        { id: "a1", source: "user", target: "frontend", label: "HTTPS", type: "default" },
-        { id: "a2", source: "frontend", target: "api_gw", label: "REST calls", type: "default" },
-        { id: "a3", source: "api_gw", target: "backend", label: "Proxy route", type: "default" },
-        { id: "a4", source: "backend", target: "cache", label: "session lookups", type: "default" },
-        { id: "a5", source: "backend", target: "database", label: "SQL Queries", type: "default" },
-        { id: "a6", source: "backend", target: "stripe", label: "sync bills", type: "default" }
+        { id: "a1", source: "user", target: "frontend", label: "HTTPS / TLS 1.3", type: "default" },
+        { id: "a2", source: "frontend", target: "api_gw", label: "REST / JSON", type: "default" },
+        { id: "a3", source: "api_gw", target: "core_api", label: "gRPC (mTLS)", type: "default" },
+        { id: "a4", source: "core_api", target: "cache", label: "Cache Lookup", type: "default" },
+        { id: "a5", source: "core_api", target: "database", label: "SQL Queries (Pool)", type: "default" },
+        { id: "a6", source: "core_api", target: "event_bus", label: "pub/sub (Events)", type: "default", animated: true },
+        { id: "a7", source: "core_api", target: "stripe", label: "HTTPS Webhooks", type: "default", style: { strokeDasharray: "5,5" } }
       ]
     };
   }
@@ -288,17 +423,65 @@ function generateOfflineFallback(prompt: string, systemPrompt: string): DiagramD
   // --- BPMN DIAGRAM TEMPLATE ---
   if (lowerPrompt.includes("bpmn") || lowerPrompt.includes("business") || lowerPrompt.includes("process")) {
     return {
-      title: "Order Fulfillment Workflow",
+      title: "Order Fulfillment & Billing Workflow",
       type: "bpmn",
       nodes: assignPositions([
-        { id: "start_evt", label: "Order Placed", type: "event", description: "Start of process" },
-        { id: "chk_stock", label: "Check Stock Inventory", type: "task", description: "Verify warehouse inventory" },
-        { id: "gw_stock", label: "Stock Available?", type: "gateway", description: "Exclusive decision gateway" },
-        { id: "charge_card", label: "Process Stripe Payment", type: "task", description: "Charge customer card" },
-        { id: "notify_fail", label: "Notify Out of Stock", type: "task", description: "Send apology email" },
-        { id: "ship_pkg", label: "Ship Package", type: "task", description: "Deliver order to address" },
-        { id: "end_success", label: "Completed Fulfillment", type: "event", description: "End event - success" },
-        { id: "end_fail", label: "Cancelled Fulfillment", type: "event", description: "End event - failure" }
+        { 
+          id: "start_evt", 
+          label: "Order Placed", 
+          type: "event", 
+          description: "Customer checkout event triggered",
+          metadata: { layer: "EVENT", status: "active" }
+        },
+        { 
+          id: "chk_stock", 
+          label: "Verify Warehouse Stock", 
+          type: "task", 
+          description: "Query real-time inventory management database",
+          metadata: { tech: "Inventory API", layer: "SERVICE TASK", status: "active" }
+        },
+        { 
+          id: "gw_stock", 
+          label: "Items in Stock?", 
+          type: "gateway", 
+          description: "Exclusive XOR branch decision",
+          metadata: { layer: "DECISION GATEWAY" }
+        },
+        { 
+          id: "charge_card", 
+          label: "Process Card Payment", 
+          type: "task", 
+          description: "Authorize and capture charge via Stripe",
+          metadata: { tech: "Stripe API", layer: "SERVICE TASK", status: "active" }
+        },
+        { 
+          id: "notify_fail", 
+          label: "Send Out-of-Stock Email", 
+          type: "task", 
+          description: "Notify customer of delayed backorder",
+          metadata: { tech: "Resend / SES", layer: "SERVICE TASK", status: "active" }
+        },
+        { 
+          id: "ship_pkg", 
+          label: "Dispatch Shipment", 
+          type: "task", 
+          description: "Generate shipping label and notify carrier",
+          metadata: { tech: "FedEx / DHL API", layer: "SERVICE TASK", status: "active" }
+        },
+        { 
+          id: "end_success", 
+          label: "Fulfillment Completed", 
+          type: "event", 
+          description: "Order marked delivered and closed",
+          metadata: { layer: "END EVENT" }
+        },
+        { 
+          id: "end_fail", 
+          label: "Order Cancelled", 
+          type: "event", 
+          description: "Inventory rollback and order termination",
+          metadata: { layer: "END EVENT" }
+        }
       ]),
       edges: [
         { id: "b1", source: "start_evt", target: "chk_stock", label: "", type: "default" },
@@ -306,7 +489,7 @@ function generateOfflineFallback(prompt: string, systemPrompt: string): DiagramD
         { id: "b3", source: "gw_stock", target: "charge_card", label: "Yes", type: "default" },
         { id: "b4", source: "gw_stock", target: "notify_fail", label: "No", type: "default" },
         { id: "b5", source: "notify_fail", target: "end_fail", label: "", type: "default" },
-        { id: "b6", source: "charge_card", target: "ship_pkg", label: "success", type: "default" },
+        { id: "b6", source: "charge_card", target: "ship_pkg", label: "Success", type: "default" },
         { id: "b7", source: "ship_pkg", target: "end_success", label: "", type: "default" }
       ]
     };
@@ -314,15 +497,15 @@ function generateOfflineFallback(prompt: string, systemPrompt: string): DiagramD
 
   // --- GENERAL FLOWCHART TEMPLATE (DEFAULT) ---
   return {
-    title: "General Process Flowchart",
+    title: "Secure Authentication Verification Flowchart",
     type: "flowchart",
     nodes: assignPositions([
-      { id: "start", label: "Start", type: "start", description: "Trigger event" },
-      { id: "step1", label: "Process Input Request", type: "process", description: "Parse text input details" },
-      { id: "chk_cond", label: "Valid Schema?", type: "decision", description: "Check Zod specifications" },
-      { id: "fail_step", label: "Generate Error Alert", type: "process", description: "Output user warning message" },
-      { id: "success_step", label: "Render Canvas Graph", type: "process", description: "Mount React Flow nodes" },
-      { id: "end", label: "End Process", type: "end", description: "Rendering complete" }
+      { id: "start", label: "Start Request", type: "start", description: "Inbound HTTP request received", metadata: { layer: "START" } },
+      { id: "step1", label: "Extract Bearer Token", type: "process", description: "Read Authorization header", metadata: { tech: "Middleware", layer: "PROCESS" } },
+      { id: "chk_cond", label: "Valid Signature?", type: "decision", description: "Verify RSA public key & expiry", metadata: { layer: "DECISION" } },
+      { id: "fail_step", label: "Return 401 Unauthorized", type: "process", description: "Reject request with error payload", metadata: { layer: "PROCESS" } },
+      { id: "success_step", label: "Attach User Context", type: "process", description: "Forward to upstream route handler", metadata: { layer: "PROCESS" } },
+      { id: "end", label: "Complete Request", type: "end", description: "Response dispatched to client", metadata: { layer: "END" } }
     ]),
     edges: [
       { id: "f1", source: "start", target: "step1", label: "", type: "default" },

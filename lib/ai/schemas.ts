@@ -9,6 +9,8 @@ export const NodeSchema = z.object({
     x: z.number().default(0),
     y: z.number().default(0),
   }).default({ x: 0, y: 0 }),
+  targetPosition: z.any().optional(),
+  sourcePosition: z.any().optional(),
   metadata: z.record(z.string(), z.any()).optional(),
 });
 
@@ -18,6 +20,10 @@ export const EdgeSchema = z.object({
   target: z.string(),
   label: z.string().optional(),
   type: z.string().optional().default("default"),
+  animated: z.boolean().optional(),
+  sourceHandle: z.string().nullable().optional(),
+  targetHandle: z.string().nullable().optional(),
+  style: z.record(z.string(), z.any()).optional(),
 });
 
 export const DiagramSettingsSchema = z.object({
