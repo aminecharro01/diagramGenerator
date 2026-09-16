@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Diagrammi
+
+Diagrammi is an AI-assisted diagramming tool for generating and editing software architecture diagrams (C4 model, UML) from natural-language prompts or PlantUML. It combines a React Flow canvas with an LLM backend to generate, refine, and export professional diagrams.
+
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![Tailwind](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-Postgres%20%2B%20Auth-3ECF8E?logo=supabase&logoColor=white)
+
+## Key Features
+
+- **AI diagram generation** — describe a system in plain language and generate a diagram via an OpenAI-compatible API (`lib/ai/`)
+- **Interactive canvas** — pan/zoom/edit diagrams built on [@xyflow/react](https://reactflow.dev), with themed edges and custom node types (Actor, Entity, Note, Standard, UML Class, Use Case)
+- **PlantUML import** — parse existing `.puml` diagrams into the visual canvas (`lib/diagram/plantuml-parser.ts`)
+- **Auto-layout** — automatic node arrangement via `dagre`
+- **Export** — export diagrams to images via `html-to-image`
+- **Sharing** — shareable, tokenized read-only diagram links (`app/share/[token]`)
+- **Authoring guidelines engine** — enforces C4/UML visual conventions consistently (`lib/diagram/DIAGRAM_RULES.md`, `guidelines.ts`)
+- **Auth & persistence** — Supabase-backed accounts and saved diagrams/workspaces
+
+## Project Structure
+
+```
+Diagrammi/
+├── app/
+│   ├── api/
+│   │   ├── generate/         # AI diagram generation endpoint
+│   │   ├── refine/           # AI diagram refinement endpoint
+│   │   ├── diagrams/         # CRUD for saved diagrams
+│   │   └── share/            # Share-link creation/resolution
+│   ├── dashboard/            # User's diagram list
+│   ├── workspace/[id]/       # Main diagram editor
+│   ├── share/[token]/        # Public read-only diagram view
+│   ├── login/ signup/ forgot-password/ reset-password/
+│   └── settings/
+├── components/
+│   └── workspace/
+│       └── canvas/
+│           ├── nodes/        # ActorNode, EntityNode, StandardNode, UmlClassNode, UseCaseNode, NoteNode
+│           └── edges/        # ThemedEdge
+├── lib/
+│   ├── ai/                   # provider.ts, prompts.ts, schemas.ts — LLM integration
+│   ├── diagram/               # layout.ts, export.ts, plantuml-parser.ts, guidelines.ts
+│   └── supabase/             # Supabase client (browser/server)
+├── types/                    # Shared TypeScript types (diagram.ts)
+└── middleware.ts             # Auth/session middleware
+```
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 20+
+- A [Supabase](https://supabase.com) project
+- An OpenAI-compatible API key (OpenAI, or any compatible provider)
+
+### Environment Variables
+
+Copy `.env.example` to `.env.local` and fill in the values:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-only, never expose client-side) |
+| `AI_API_KEY` | API key for the AI provider |
+| `AI_MODEL` | Model name (default `gpt-4o-mini`) |
+| `AI_BASE_URL` | OpenAI-compatible API base URL |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Installation & Development
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+npm run dev        # http://localhost:3000
+```
 
-## Learn More
+### Build & Run
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run build
+npm start
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Linting
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run lint
+```
