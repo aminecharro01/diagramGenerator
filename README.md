@@ -1,3 +1,5 @@
+![Diagrammi preview](docs/mockup.jpg)
+
 # Diagrammi
 
 Diagrammi is an AI-assisted diagramming tool for generating and editing software architecture diagrams (C4 model, UML) from natural-language prompts or PlantUML. It combines a React Flow canvas with an LLM backend to generate, refine, and export professional diagrams.
