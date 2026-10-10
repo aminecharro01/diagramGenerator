@@ -2,6 +2,8 @@
 
 # Diagrammi
 
+🔗 Portfolio: https://www.aminecharro.me
+
 Diagrammi is an AI-assisted diagramming tool for generating and editing software architecture diagrams (C4 model, UML) from natural-language prompts or PlantUML. It combines a React Flow canvas with an LLM backend to generate, refine, and export professional diagrams.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
